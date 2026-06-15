@@ -27,10 +27,7 @@ export class PayloadTooLargeError extends Error {
   /** The maximum allowed payload size, in bytes. */
   readonly maxBytes: number;
 
-  constructor(
-    payloadBytes: number,
-    maxBytes: number = MAX_AXON_PUBLISH_PAYLOAD_BYTES,
-  ) {
+  constructor(payloadBytes: number, maxBytes: number = MAX_AXON_PUBLISH_PAYLOAD_BYTES) {
     super(
       `Axon publish payload is too large: ${payloadBytes} bytes exceeds the ${maxBytes} byte ` +
         "limit. Reduce the request size (e.g. fewer or smaller attachments).",
@@ -48,9 +45,7 @@ export class PayloadTooLargeError extends Error {
  * @returns `true` if `error` is a {@link PayloadTooLargeError}.
  * @category Errors
  */
-export function isPayloadTooLargeError(
-  error: unknown,
-): error is PayloadTooLargeError {
+export function isPayloadTooLargeError(error: unknown): error is PayloadTooLargeError {
   return error instanceof PayloadTooLargeError;
 }
 
