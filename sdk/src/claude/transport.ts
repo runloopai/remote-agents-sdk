@@ -11,6 +11,7 @@
 import type { AxonEventView } from "@runloop/api-client/resources/axons";
 import type { Axon } from "@runloop/api-client/sdk";
 import type { Stream } from "@runloop/api-client/streaming";
+import { assertPayloadWithinLimit } from "../shared/errors/payload-too-large-error.js";
 import { isSystemError, SystemError } from "../shared/errors/system-error.js";
 import { makeLogger } from "../shared/logging.js";
 import { isFromAgent, isFromUser } from "../shared/origin-guards.js";
@@ -246,6 +247,7 @@ export class AxonTransport implements Transport {
       throw new Error("Transport is not ready. Call connect() first or check isReady().");
     }
     const eventType = this.resolveEventType(data);
+    assertPayloadWithinLimit(data);
     this.log("write", `event_type=${eventType}`);
     await this.axon.publish({
       event_type: eventType,

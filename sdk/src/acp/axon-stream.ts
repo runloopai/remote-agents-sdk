@@ -2,6 +2,7 @@ import type { AnyMessage, Stream } from "@agentclientprotocol/sdk";
 import { AGENT_METHODS, CLIENT_METHODS } from "@agentclientprotocol/sdk";
 import type { AxonEventView } from "@runloop/api-client/resources/axons";
 import type { Axon } from "@runloop/api-client/sdk";
+import { assertPayloadWithinLimit } from "../shared/errors/payload-too-large-error.js";
 import { isSystemError, SystemError } from "../shared/errors/system-error.js";
 import { makeDefaultOnError } from "../shared/logging.js";
 import { isFromAgent, isFromUser } from "../shared/origin-guards.js";
@@ -459,6 +460,7 @@ function createWritable(
   return new WritableStream<AnyMessage>({
     async write(message) {
       const { eventType, payload } = jsonRpcToAxon(message, pendingRequests, pendingClientRequests);
+      assertPayloadWithinLimit(payload);
       log?.("write", `event_type=${eventType}`);
       try {
         await axon.publish({

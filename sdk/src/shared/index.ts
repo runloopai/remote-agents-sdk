@@ -17,6 +17,12 @@ export {
   isConnectionStateError,
 } from "./errors/connection-state-error.js";
 export { InitializationError } from "./errors/initialization-error.js";
+export {
+  assertPayloadWithinLimit,
+  isPayloadTooLargeError,
+  MAX_AXON_PUBLISH_PAYLOAD_BYTES,
+  PayloadTooLargeError,
+} from "./errors/payload-too-large-error.js";
 export { SystemError, type SystemErrorEventInfo } from "./errors/system-error.js";
 export { runDisconnectHook } from "./lifecycle.js";
 export { ListenerSet } from "./listener-set.js";

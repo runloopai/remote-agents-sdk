@@ -33,6 +33,7 @@ import type { Axon, Devbox } from "@runloop/api-client/sdk";
 import { resolveReplayTarget } from "../shared/connect-guards.js";
 import { ConnectionStateError } from "../shared/errors/connection-state-error.js";
 import { InitializationError } from "../shared/errors/initialization-error.js";
+import { assertPayloadWithinLimit } from "../shared/errors/payload-too-large-error.js";
 import { runDisconnectHook } from "../shared/lifecycle.js";
 import { ListenerSet } from "../shared/listener-set.js";
 import { makeDefaultOnError, makeLogger } from "../shared/logging.js";
@@ -421,6 +422,7 @@ export class ACPAxonConnection {
    * @returns The publish result with sequence number and timestamp.
    */
   async publish(params: AxonPublishParams): Promise<PublishResultView> {
+    assertPayloadWithinLimit(params.payload);
     return this.axon.publish(params);
   }
 
