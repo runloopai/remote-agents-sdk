@@ -1072,6 +1072,20 @@ describe("ClaudeAxonConnection", () => {
       expect(initCalls.length).toBe(1);
     });
 
+    it("keeps re-subscribing after repeated unexpected stream ends", async () => {
+      await createConnectedClient(transport);
+
+      transport._end();
+      await vi.waitFor(() => {
+        expect(transport.reconnect).toHaveBeenCalledTimes(1);
+      });
+
+      transport._end();
+      await vi.waitFor(() => {
+        expect(transport.reconnect).toHaveBeenCalledTimes(2);
+      });
+    });
+
     it("does not reconnect when disconnect() was called", async () => {
       const conn = await createConnectedClient(transport);
 

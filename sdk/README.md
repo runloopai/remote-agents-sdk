@@ -700,7 +700,7 @@ type WireData = Record<string, any>;
 ## Known Limitations
 
 - **Explicit `connect()` required** (ACP & Claude): Both `ACPAxonConnection` and `ClaudeAxonConnection` require an explicit `await conn.connect()` call before `initialize()`. The constructor is lightweight and synchronous.
-- **Automatic reconnection (single retry)**: If an SSE stream drops unexpectedly, the SDK re-subscribes once and logs a `console.warn`. If the retry also fails, the connection is terminal — create a new instance.
+- **Automatic reconnection**: If a managed ACP or Claude connection's SSE stream drops unexpectedly, the SDK keeps re-subscribing from the last seen Axon sequence until the connection is intentionally aborted/disconnected or a fatal broker error is received.
 - **Permission handling** (Claude): The `ClaudeAxonConnection` auto-approves all tool use by default. Register a `"can_use_tool"` handler via `onControlRequest()` to customize.
 
 ### ACP: `prompt()` resolves before all session updates arrive

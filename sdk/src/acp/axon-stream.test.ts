@@ -568,10 +568,12 @@ describe("axonStream", () => {
   });
 
   describe("auto-reconnect", () => {
-    it("re-subscribes once when the SSE stream ends unexpectedly", async () => {
+    it("keeps re-subscribing when the SSE stream ends unexpectedly", async () => {
+      vi.useFakeTimers();
       const ctrl1 = createControllableStream();
       const ctrl2 = createControllableStream();
       const published: PublishCall[] = [];
+      const abortController = new AbortController();
       const axon = {
         id: "test-axon",
         subscribeSse: vi
@@ -585,30 +587,46 @@ describe("axonStream", () => {
 
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-      const { readable } = axonStream({ axon: axon as never });
+      try {
+        const { readable } = axonStream({
+          axon: axon as never,
+          signal: abortController.signal,
+        });
+        const reader = readable.getReader();
 
-      ctrl1.push(makeAgentEvent("session/update", { msg: "first" }));
-      ctrl1.end();
+        ctrl1.push(makeAgentEvent("session/update", { msg: "first" }));
+        const first = await reader.read();
+        expect(first.value).toMatchObject({ params: { msg: "first" } });
 
-      ctrl2.push(makeAgentEvent("session/update", { msg: "second" }));
-      ctrl2.end();
+        ctrl1.end();
+        await vi.advanceTimersByTimeAsync(1_000);
+        await vi.waitFor(() => expect(axon.subscribeSse).toHaveBeenCalledTimes(2));
 
-      const messages = await drain(readable);
-      expect(messages).toHaveLength(2);
-      expect(messages[0]).toMatchObject({ params: { msg: "first" } });
-      expect(messages[1]).toMatchObject({ params: { msg: "second" } });
-      expect(axon.subscribeSse).toHaveBeenCalledTimes(2);
-      expect(errorSpy).toHaveBeenCalledWith(
-        "[axonStream]",
-        expect.stringContaining("SSE stream ended"),
-      );
+        ctrl2.push(makeAgentEvent("session/update", { msg: "second" }));
+        const second = await reader.read();
+        expect(second.value).toMatchObject({ params: { msg: "second" } });
 
-      errorSpy.mockRestore();
+        abortController.abort();
+        ctrl2.end();
+        const done = await reader.read();
+        expect(done.done).toBe(true);
+        reader.releaseLock();
+
+        expect(errorSpy).toHaveBeenCalledWith(
+          "[axonStream]",
+          expect.stringContaining("SSE stream ended"),
+        );
+      } finally {
+        errorSpy.mockRestore();
+        vi.useRealTimers();
+      }
     });
 
     it("passes after_sequence on re-subscribe using last seen sequence", async () => {
+      vi.useFakeTimers();
       const ctrl1 = createControllableStream();
       const ctrl2 = createControllableStream();
+      const abortController = new AbortController();
       const axon = {
         id: "test-axon",
         subscribeSse: vi
@@ -620,26 +638,43 @@ describe("axonStream", () => {
 
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-      const { readable } = axonStream({ axon: axon as never });
+      try {
+        const { readable } = axonStream({
+          axon: axon as never,
+          signal: abortController.signal,
+        });
+        const reader = readable.getReader();
 
-      ctrl1.push(makeAgentEvent("session/update", { msg: "first" }, 10));
-      ctrl1.push(makeAgentEvent("session/update", { msg: "second" }, 15));
-      ctrl1.end();
+        ctrl1.push(makeAgentEvent("session/update", { msg: "first" }, 10));
+        ctrl1.push(makeAgentEvent("session/update", { msg: "second" }, 15));
+        expect((await reader.read()).value).toMatchObject({ params: { msg: "first" } });
+        expect((await reader.read()).value).toMatchObject({ params: { msg: "second" } });
 
-      ctrl2.push(makeAgentEvent("session/update", { msg: "third" }, 16));
-      ctrl2.end();
+        ctrl1.end();
+        await vi.advanceTimersByTimeAsync(1_000);
+        await vi.waitFor(() => expect(axon.subscribeSse).toHaveBeenCalledTimes(2));
 
-      const messages = await drain(readable);
-      expect(messages).toHaveLength(3);
-      expect(axon.subscribeSse).toHaveBeenCalledTimes(2);
-      expect(axon.subscribeSse).toHaveBeenNthCalledWith(1, undefined);
-      expect(axon.subscribeSse).toHaveBeenNthCalledWith(2, { after_sequence: 15 });
+        ctrl2.push(makeAgentEvent("session/update", { msg: "third" }, 16));
+        expect((await reader.read()).value).toMatchObject({ params: { msg: "third" } });
 
-      errorSpy.mockRestore();
+        abortController.abort();
+        ctrl2.end();
+        expect((await reader.read()).done).toBe(true);
+        reader.releaseLock();
+
+        expect(axon.subscribeSse).toHaveBeenCalledTimes(2);
+        expect(axon.subscribeSse).toHaveBeenNthCalledWith(1, undefined);
+        expect(axon.subscribeSse).toHaveBeenNthCalledWith(2, { after_sequence: 15 });
+      } finally {
+        errorSpy.mockRestore();
+        vi.useRealTimers();
+      }
     });
 
-    it("re-subscribes once on SSE stream error and continues", async () => {
+    it("re-subscribes on SSE stream error and continues", async () => {
+      vi.useFakeTimers();
       const ctrl2 = createControllableStream();
+      const abortController = new AbortController();
       let callCount = 0;
       const axon = {
         id: "test-axon",
@@ -663,24 +698,38 @@ describe("axonStream", () => {
 
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-      const { readable } = axonStream({ axon: axon as never });
+      try {
+        const { readable } = axonStream({
+          axon: axon as never,
+          signal: abortController.signal,
+        });
+        const reader = readable.getReader();
 
-      ctrl2.push(makeAgentEvent("session/update", { msg: "recovered" }));
-      ctrl2.end();
+        await vi.advanceTimersByTimeAsync(1_000);
+        await vi.waitFor(() => expect(axon.subscribeSse).toHaveBeenCalledTimes(2));
 
-      const messages = await drain(readable);
-      expect(messages).toHaveLength(1);
-      expect(messages[0]).toMatchObject({ params: { msg: "recovered" } });
-      expect(axon.subscribeSse).toHaveBeenCalledTimes(2);
-      expect(errorSpy).toHaveBeenCalledWith(
-        "[axonStream]",
-        expect.stringContaining("SSE stream error"),
-      );
+        ctrl2.push(makeAgentEvent("session/update", { msg: "recovered" }));
+        const message = await reader.read();
+        expect(message.value).toMatchObject({ params: { msg: "recovered" } });
 
-      errorSpy.mockRestore();
+        abortController.abort();
+        ctrl2.end();
+        expect((await reader.read()).done).toBe(true);
+        reader.releaseLock();
+
+        expect(errorSpy).toHaveBeenCalledWith(
+          "[axonStream]",
+          expect.stringContaining("SSE stream error"),
+        );
+      } finally {
+        errorSpy.mockRestore();
+        vi.useRealTimers();
+      }
     });
 
-    it("closes the stream if the second subscription also fails", async () => {
+    it("keeps retrying repeated SSE failures until aborted", async () => {
+      vi.useFakeTimers();
+      const abortController = new AbortController();
       const axon = {
         id: "test-axon",
         subscribeSse: vi.fn().mockImplementation(async () => ({
@@ -697,13 +746,26 @@ describe("axonStream", () => {
 
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-      const { readable } = axonStream({ axon: axon as never });
+      try {
+        const { readable } = axonStream({
+          axon: axon as never,
+          signal: abortController.signal,
+        });
+        const reader = readable.getReader();
 
-      const reader = readable.getReader();
-      await expect(reader.read()).rejects.toThrow("permanent failure");
-      expect(axon.subscribeSse).toHaveBeenCalledTimes(2);
+        await vi.advanceTimersByTimeAsync(1_000);
+        await vi.waitFor(() => expect(axon.subscribeSse).toHaveBeenCalledTimes(2));
+        await vi.advanceTimersByTimeAsync(2_000);
+        await vi.waitFor(() => expect(axon.subscribeSse).toHaveBeenCalledTimes(3));
 
-      errorSpy.mockRestore();
+        abortController.abort();
+        await vi.advanceTimersByTimeAsync(4_000);
+        expect((await reader.read()).done).toBe(true);
+        reader.releaseLock();
+      } finally {
+        errorSpy.mockRestore();
+        vi.useRealTimers();
+      }
     });
 
     it("does NOT re-subscribe when signal is aborted", async () => {

@@ -10,6 +10,29 @@ import { isTurnFailedAxonEvent, tryParseSystemEvent } from "../shared/timeline.j
 import type { LogFn } from "../shared/types.js";
 import type { AxonStreamOptions } from "./types.js";
 
+const INITIAL_RECONNECT_BACKOFF_MS = 1_000;
+const MAX_RECONNECT_BACKOFF_MS = 30_000;
+
+function delayWithAbort(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 /**
  * Set of event_types that are notifications (no request ID correlation).
  * `session/update` is the main one -- the broker sends streaming chunks,
@@ -112,10 +135,13 @@ function createReadable(
   initialAfterSequence?: number,
   replayTargetSequence?: number,
 ): ReadableStream<AnyMessage> {
+  let cancelled = false;
+
   return new ReadableStream<AnyMessage>({
     async start(controller) {
       let totalEvents = 0;
       let attempt = 0;
+      let backoffMs = INITIAL_RECONNECT_BACKOFF_MS;
       let lastSequence: number | undefined = initialAfterSequence;
 
       const replaying = replayTargetSequence != null;
@@ -124,7 +150,7 @@ function createReadable(
       // response is seen, the entry is deleted (resolved).
       const replayBuffer = new Map<string, AnyMessage>();
 
-      while (!signal?.aborted) {
+      while (!signal?.aborted && !cancelled) {
         attempt++;
         let eventCount = 0;
         try {
@@ -138,6 +164,7 @@ function createReadable(
             eventCount++;
             totalEvents++;
             lastSequence = axonEvent.sequence;
+            backoffMs = INITIAL_RECONNECT_BACKOFF_MS;
 
             onAxonEvent?.(axonEvent);
 
@@ -240,25 +267,25 @@ function createReadable(
             if (msg) controller.enqueue(msg);
           }
         } catch (err) {
-          if (signal?.aborted) break;
-          if (attempt === 1) {
-            onError(
-              `[axonStream] SSE stream error after ${eventCount} events, re-subscribing: ${err}`,
-            );
-            continue;
+          if (signal?.aborted || cancelled) break;
+          if (!signal) {
+            controller.error(err);
+            return;
           }
-          log?.("read", `error on reconnect attempt after ${eventCount} events: ${err}`);
-          controller.error(err);
-          return;
-        }
-
-        if (signal?.aborted) break;
-
-        if (attempt === 1) {
-          onError(`[axonStream] SSE stream ended after ${eventCount} events, re-subscribing`);
+          onError(
+            `[axonStream] SSE stream error after ${eventCount} events, re-subscribing: ${err}`,
+          );
+          await delayWithAbort(backoffMs, signal);
+          backoffMs = Math.min(backoffMs * 2, MAX_RECONNECT_BACKOFF_MS);
           continue;
         }
-        break;
+
+        if (signal?.aborted || cancelled) break;
+        if (!signal) break;
+
+        onError(`[axonStream] SSE stream ended after ${eventCount} events, re-subscribing`);
+        await delayWithAbort(backoffMs, signal);
+        backoffMs = Math.min(backoffMs * 2, MAX_RECONNECT_BACKOFF_MS);
       }
 
       // If replay ended because the stream closed before reaching the target,
@@ -271,6 +298,9 @@ function createReadable(
       pendingClientRequests.clear();
       log?.("read", `SSE ended after ${totalEvents} total events`);
       controller.close();
+    },
+    cancel() {
+      cancelled = true;
     },
   });
 }
