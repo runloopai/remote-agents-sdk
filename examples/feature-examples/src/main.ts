@@ -84,6 +84,20 @@ async function runOne(
   const expectedFailReason = useCase.expectedFailures?.[agent.name];
   const getDurationMs = () => (agentStartMs === null ? 0 : Date.now() - agentStartMs);
 
+  // Pre-setup skip: avoids provisioning a devbox we know we cannot use
+  // (e.g. an account with an exhausted API quota for this agent).
+  const preSkipReason = useCase.skipForAgents?.[agent.name];
+  if (preSkipReason) {
+    return {
+      agent: agent.name,
+      useCase: useCase.name,
+      protocol: agent.protocol,
+      status: "skip",
+      reason: preSkipReason,
+      durationMs: 0,
+    };
+  }
+
   try {
     const { ctx: setupCtx } = await setup(agent, useCase);
     ctx = setupCtx;

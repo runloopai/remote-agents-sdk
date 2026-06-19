@@ -19,6 +19,7 @@ Refer to ../scaffold.ts for setup and advice on best practices.
 - [agent-via-blueprint](https://github.com/runloopai/remote-agents-sdk/blob/main/examples/feature-examples/src/use-cases/agent-via-blueprint.ts) — Use pre-built blueprint with agents baked in (acp + claude)
 - [elicitation-acp](https://github.com/runloopai/remote-agents-sdk/blob/main/examples/feature-examples/src/use-cases/elicitation-acp.ts) — Handle agent-initiated user input via ACP session_elicitation (acp)
 - [elicitation-claude](https://github.com/runloopai/remote-agents-sdk/blob/main/examples/feature-examples/src/use-cases/elicitation-claude.ts) — Handle agent-initiated user input via Claude conversational flow (claude)
+- [mcp-server](https://github.com/runloopai/remote-agents-sdk/blob/main/examples/feature-examples/src/use-cases/mcp-server.ts) — Attach an MCP server to a session and exercise an MCP tool (acp + claude)
 - [single-prompt](https://github.com/runloopai/remote-agents-sdk/blob/main/examples/feature-examples/src/use-cases/single-prompt.ts) — Send one prompt, receive text response (acp + claude)
 
 ## Compatibility

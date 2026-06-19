@@ -7,7 +7,7 @@ export default {
   name: "elicitation-claude",
   description: "Handle agent-initiated user input via Claude conversational flow",
   protocols: ["claude"],
-  timeoutMs: 20_000,
+  timeoutMs: 30_000,
 
   async run(ctx) {
     if (!ctx.claude) {

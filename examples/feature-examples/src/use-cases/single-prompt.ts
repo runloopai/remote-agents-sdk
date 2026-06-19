@@ -8,12 +8,19 @@ const PROMPT = "Say hello world";
 // notifications for this turn, so give chunks a grace window to arrive.
 const ACP_CHUNK_WAIT_MS = 5_000;
 
+const GEMINI_QUOTA_SKIP =
+  "Untestable on this account: Gemini API quota exhausted (verified working with sufficient quota)";
+
 /** Single-prompt: send one prompt, receive a text response. */
 export default {
   name: "single-prompt",
   description: "Send one prompt, receive text response",
   protocols: ["acp", "claude"],
   timeoutMs: 30_000,
+
+  skipForAgents: {
+    "gemini-cli": GEMINI_QUOTA_SKIP,
+  },
 
   async run(ctx) {
     if (ctx.acp) {

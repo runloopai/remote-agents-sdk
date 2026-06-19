@@ -1,7 +1,14 @@
 import { RunloopSDK, type Secret } from "@runloop/api-client";
 import { ACPAxonConnection, PROTOCOL_VERSION } from "@runloop/remote-agents-sdk/acp";
 import { ClaudeAxonConnection } from "@runloop/remote-agents-sdk/claude";
-import type { AgentConfig, AgentConfigOverride, BrokerMount, UseCase, RunContext } from "./types.js";
+import type {
+  AgentConfig,
+  AgentConfigOverride,
+  BrokerMount,
+  ExtraMount,
+  UseCase,
+  RunContext,
+} from "./types.js";
 import { SkipError } from "./types.js";
 import { withTimeout } from "./validator.js";
 
@@ -10,7 +17,13 @@ interface SetupResult {
   sdk: RunloopSDK;
 }
 
-const DEFAULT_WORKING_DIRECTORY = "/home/user";
+/**
+ * Default home directory for the devbox user. Use cases that need to drop
+ * config under `~` (e.g. gemini-cli's `~/.gemini/settings.json`) should
+ * import this rather than hardcode the path.
+ */
+export const DEFAULT_USER_HOME = "/home/user";
+const DEFAULT_WORKING_DIRECTORY = DEFAULT_USER_HOME;
 const SETUP_STEP_TIMEOUT_MS = 30_000;
 const SETUP_ERROR_CLEANUP_TIMEOUT_MS = 10_000;
 const DEVBOX_PROVISION_TIMEOUT_MS = 180_000; // 3 minutes for cold start with agent mounts
@@ -71,8 +84,10 @@ export async function setup(agent: AgentConfig, useCase: UseCase): Promise<Setup
     devboxSecretsMap[devboxEnv] = secret.name;
   }
 
-  // Build the devbox mounts array from the merged config.
-  const mounts = buildDevboxMounts(axon.id, mergedAgent);
+  // Build the devbox mounts array from the merged config, plus any extra
+  // per-agent mounts the use-case requested (e.g. gemini-cli settings.json).
+  const extraMounts = useCase.extraMountsByAgent?.[agent.name] ?? [];
+  const mounts = buildDevboxMounts(axon.id, mergedAgent, extraMounts);
 
   log("Creating devbox...");
   const devbox = await sdk.devbox.create(
@@ -138,7 +153,7 @@ export async function setup(agent: AgentConfig, useCase: UseCase): Promise<Setup
       const session = await withTimeout(
         conn.newSession({
           cwd: mergedAgent.brokerMount.workingDirectory ?? DEFAULT_WORKING_DIRECTORY,
-          mcpServers: [],
+          mcpServers: useCase.acpMcpServers ?? [],
         }),
         SETUP_STEP_TIMEOUT_MS,
         "ACP newSession",
@@ -238,14 +253,19 @@ function validateConfig(agent: AgentConfig): void {
 }
 
 /**
- * Build the devbox mounts array from the agent config.
+ * Build the devbox mounts array from the agent config plus any use-case
+ * supplied extra mounts.
  *
- * - **catalog** install: adds an `agent_mount` (to install from catalog) + `broker_mount`.
+ * - **agent-mount** install: adds an `agent_mount` (to install from catalog) + `broker_mount`.
  * - **blueprint** install: only a `broker_mount` (agent is pre-baked).
+ *
+ * Extra mounts (e.g. inline `file_mount` for agent config) are appended last
+ * so the standard mounts are always present.
  */
 function buildDevboxMounts(
   axonId: string,
   agent: AgentConfig,
+  extraMounts: ExtraMount[] = [],
 ): Array<
   | { type: "agent_mount"; agent_id: null; agent_name: string }
   | {
@@ -256,20 +276,22 @@ function buildDevboxMounts(
       launch_args?: string[];
       working_directory?: string;
     }
+  | ExtraMount
 > {
   const brokerMount = buildBrokerMount(axonId, agent.brokerMount);
+  const base =
+    agent.install.kind === "agent-mount"
+      ? [
+          {
+            type: "agent_mount" as const,
+            agent_id: null,
+            agent_name: agent.install.agentName,
+          },
+          brokerMount,
+        ]
+      : [brokerMount];
 
-  if (agent.install.kind === "agent-mount") {
-    const agentMount = {
-      type: "agent_mount" as const,
-      agent_id: null,
-      agent_name: agent.install.agentName,
-    };
-    return [agentMount, brokerMount];
-  }
-
-  // Blueprint install: agent is already in the image.
-  return [brokerMount];
+  return [...base, ...extraMounts];
 }
 
 /**

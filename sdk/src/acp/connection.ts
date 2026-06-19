@@ -31,6 +31,7 @@ import type {
 } from "@runloop/api-client/resources/axons";
 import type { Axon, Devbox } from "@runloop/api-client/sdk";
 import { resolveReplayTarget } from "../shared/connect-guards.js";
+import { rethrowAsACPError, toACPError } from "../shared/errors/acp-request-error.js";
 import { ConnectionStateError } from "../shared/errors/connection-state-error.js";
 import { InitializationError } from "../shared/errors/initialization-error.js";
 import { runDisconnectHook } from "../shared/lifecycle.js";
@@ -237,8 +238,8 @@ export class ACPAxonConnection {
     try {
       return await this.protocol.initialize(params);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new InitializationError(message, { cause: err });
+      const wrapped = toACPError(err);
+      throw new InitializationError(wrapped.message, { cause: wrapped });
     }
   }
 
@@ -247,10 +248,11 @@ export class ACPAxonConnection {
    *
    * @param params - Session configuration including working directory and MCP servers.
    * @returns The newly created session ID and metadata.
+   * @throws {ACPRequestError} If the agent returns a JSON-RPC error response.
    */
   newSession(params: NewSessionRequest): Promise<NewSessionResponse> {
     this.ensureConnected();
-    return this.protocol.newSession(params);
+    return this.protocol.newSession(params).catch(rethrowAsACPError);
   }
 
   /**
@@ -258,10 +260,11 @@ export class ACPAxonConnection {
    *
    * @param params - Identifies the session to load.
    * @returns The restored session metadata.
+   * @throws {ACPRequestError} If the agent returns a JSON-RPC error response.
    */
   loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
     this.ensureConnected();
-    return this.protocol.loadSession(params);
+    return this.protocol.loadSession(params).catch(rethrowAsACPError);
   }
 
   /**
@@ -269,10 +272,11 @@ export class ACPAxonConnection {
    *
    * @param params - Optional filter criteria for the session list.
    * @returns An array of session summaries.
+   * @throws {ACPRequestError} If the agent returns a JSON-RPC error response.
    */
   listSessions(params: ListSessionsRequest): Promise<ListSessionsResponse> {
     this.ensureConnected();
-    return this.protocol.listSessions(params);
+    return this.protocol.listSessions(params).catch(rethrowAsACPError);
   }
 
   /**
@@ -285,10 +289,12 @@ export class ACPAxonConnection {
    *
    * @param params - Session ID and prompt content.
    * @returns The agent's prompt acknowledgement.
+   * @throws {ACPRequestError} If the agent returns a JSON-RPC error response
+   *   (e.g. quota exhausted, auth required).
    */
   prompt(params: PromptRequest): Promise<PromptResponse> {
     this.ensureConnected();
-    return this.protocol.prompt(params);
+    return this.protocol.prompt(params).catch(rethrowAsACPError);
   }
 
   /**
@@ -298,7 +304,7 @@ export class ACPAxonConnection {
    */
   cancel(params: CancelNotification): Promise<void> {
     this.ensureConnected();
-    return this.protocol.cancel(params);
+    return this.protocol.cancel(params).catch(rethrowAsACPError);
   }
 
   /**
@@ -306,10 +312,11 @@ export class ACPAxonConnection {
    *
    * @param params - Authentication method and credentials.
    * @returns The authentication result.
+   * @throws {ACPRequestError} If the agent returns a JSON-RPC error response.
    */
   authenticate(params: AuthenticateRequest): Promise<AuthenticateResponse> {
     this.ensureConnected();
-    return this.protocol.authenticate(params);
+    return this.protocol.authenticate(params).catch(rethrowAsACPError);
   }
 
   /**
@@ -317,10 +324,11 @@ export class ACPAxonConnection {
    *
    * @param params - Session ID and the target mode.
    * @returns Confirmation of the mode change.
+   * @throws {ACPRequestError} If the agent returns a JSON-RPC error response.
    */
   setSessionMode(params: SetSessionModeRequest): Promise<SetSessionModeResponse> {
     this.ensureConnected();
-    return this.protocol.setSessionMode(params);
+    return this.protocol.setSessionMode(params).catch(rethrowAsACPError);
   }
 
   /**
@@ -328,12 +336,13 @@ export class ACPAxonConnection {
    *
    * @param params - Session ID, option key, and new value.
    * @returns Confirmation of the configuration change.
+   * @throws {ACPRequestError} If the agent returns a JSON-RPC error response.
    */
   setSessionConfigOption(
     params: SetSessionConfigOptionRequest,
   ): Promise<SetSessionConfigOptionResponse> {
     this.ensureConnected();
-    return this.protocol.setSessionConfigOption(params);
+    return this.protocol.setSessionConfigOption(params).catch(rethrowAsACPError);
   }
 
   /**
@@ -342,10 +351,11 @@ export class ACPAxonConnection {
    * @param method - The custom method name.
    * @param params - Arbitrary key-value payload for the request.
    * @returns The agent's response payload.
+   * @throws {ACPRequestError} If the agent returns a JSON-RPC error response.
    */
   extMethod(method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
     this.ensureConnected();
-    return this.protocol.extMethod(method, params);
+    return this.protocol.extMethod(method, params).catch(rethrowAsACPError);
   }
 
   /**
@@ -357,7 +367,7 @@ export class ACPAxonConnection {
    */
   extNotification(method: string, params: Record<string, unknown>): Promise<void> {
     this.ensureConnected();
-    return this.protocol.extNotification(method, params);
+    return this.protocol.extNotification(method, params).catch(rethrowAsACPError);
   }
 
   // ---------------------------------------------------------------------------

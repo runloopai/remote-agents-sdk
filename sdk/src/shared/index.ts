@@ -11,6 +11,7 @@
  */
 
 export { resolveReplayTarget } from "./connect-guards.js";
+export { ACPRequestError, isACPRequestError } from "./errors/acp-request-error.js";
 export {
   ConnectionStateError,
   type ConnectionStateErrorCode,

@@ -1,6 +1,33 @@
+import type { Runloop } from "@runloop/api-client";
 import type { ACPAxonConnection } from "@runloop/remote-agents-sdk/acp";
 import type { ClaudeAxonConnection } from "@runloop/remote-agents-sdk/claude";
-import type { Client, Agent } from "@agentclientprotocol/sdk";
+import type { Client, Agent, McpServer } from "@agentclientprotocol/sdk";
+
+/**
+ * Inline `file_mount` shape from the Runloop API. The file is in place when
+ * the devbox boots, before the broker spawns the agent process — use it for
+ * agent config that must exist on startup (e.g. gemini-cli's
+ * `~/.gemini/settings.json`).
+ * Note: Use file_mounts ONLY for tiny configuration files, use object_mounts for larger files.
+ *
+ * Derived from `@runloop/api-client`'s `Mount` union so the shape can't drift
+ * from the upstream API.
+ */
+export type FileMount = Extract<Runloop.Mount, { type: "file_mount" }>;
+
+/**
+ * `object_mount` shape from the Runloop API for pre-uploaded storage objects.
+ * Derived from `@runloop/api-client`'s `Mount` union so the shape can't drift
+ * from the upstream API.
+ */
+export type ObjectMount = Extract<Runloop.Mount, { type: "object_mount" }>;
+
+/**
+ * Extra devbox mounts a use case can request per-agent. Restricted to
+ * supplemental-config mount kinds; `agent_mount` and `broker_mount` are
+ * managed by scaffold.ts and must not be duplicated here.
+ */
+export type ExtraMount = FileMount | ObjectMount;
 
 /**
  * How the agent gets installed on the devbox.
@@ -123,11 +150,42 @@ export interface UseCase {
   clientCapabilities?: Record<string, unknown>;
 
   /**
+   * MCP servers attached to the ACP `newSession()` call. Ignored for Claude
+   * paths (Claude reads MCP config from `--mcp-config` launch args instead).
+   */
+  acpMcpServers?: McpServer[];
+
+  /**
+   * Extra devbox mounts to add at provision time, keyed by agent name. Use
+   * this for agent-specific config that must be on disk *before* the broker
+   * spawns the agent process — e.g. gemini-cli's `~/.gemini/settings.json`,
+   * since gemini-cli reads MCP config from settings.json at startup and does
+   * not honour ACP `newSession.mcpServers`.
+   *
+   * Mounts here are appended to the standard `agent_mount` / `broker_mount`
+   * pair built by scaffold.ts. Inline `file_mount` is the simplest option;
+   * `object_mount` is available for pre-uploaded storage objects.
+   */
+  extraMountsByAgent?: Record<string, ExtraMount[]>;
+
+  /**
    * Per-agent expected failures (with reason), keyed by agent name.
    * Results will show as "xfail" instead of "fail" and won't cause exit code 1.
+   * Use this for protocol/feature-level limitations the agent genuinely
+   * doesn't implement (e.g. ACP elicitation not advertised).
    * E.g., `{ opencode: "Elicitation not yet supported" }`.
    */
   expectedFailures?: Record<string, string>;
+
+  /**
+   * Per-agent skip reasons, keyed by agent name. Skipped *before* setup so no
+   * devbox is provisioned. Use this for environmental limitations that prevent
+   * verifying the use case on the current machine/account (e.g. an exhausted
+   * API quota on a shared key) — distinct from `expectedFailures`, which
+   * documents a protocol/agent that genuinely lacks the feature.
+   * E.g., `{ "gemini-cli": "Cannot verify on this account: API quota exhausted" }`.
+   */
+  skipForAgents?: Record<string, string>;
 
   /**
    * The test body. Receives a fully initialized RunContext.

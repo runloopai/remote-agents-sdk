@@ -8,6 +8,7 @@ import {
   makeFullAxonEvent,
   makeSystemEvent,
 } from "../__test-utils__/mock-axon.js";
+import { ACPRequestError } from "../shared/errors/acp-request-error.js";
 import { ConnectionStateError } from "../shared/errors/connection-state-error.js";
 import { InitializationError } from "../shared/errors/initialization-error.js";
 import { ACPAxonConnection, classifyACPAxonEvent, isACPProtocolEventType } from "./connection.js";
@@ -561,6 +562,39 @@ describe("ACPAxonConnection", () => {
       conn.disconnect();
     });
 
+    it("initialize() wraps raw JSON-RPC error rejections into InitializationError with code-prefixed message", async () => {
+      const ctrl = createControllableStream();
+      const { axon } = createMockAxon(ctrl);
+      const conn = new ACPAxonConnection(axon as never, { id: "dbx-test" } as never, {
+        replay: false,
+      });
+      await conn.connect();
+
+      conn.protocol.initialize = vi.fn().mockRejectedValue({
+        code: -32601,
+        message: '"Method not found": initialize',
+        data: { method: "initialize" },
+      });
+
+      try {
+        await conn.initialize({
+          protocolVersion: PROTOCOL_VERSION,
+          clientInfo: { name: "test", version: "1.0" },
+        });
+        expect.fail("Expected InitializationError to be thrown");
+      } catch (err) {
+        expect(err).toBeInstanceOf(InitializationError);
+        // Without ACPRequestError wrapping, the message would be "[object Object]".
+        expect((err as InitializationError).message).toBe(
+          '[-32601] "Method not found": initialize {"method":"initialize"}',
+        );
+        expect((err as InitializationError).cause).toBeInstanceOf(ACPRequestError);
+        expect(((err as InitializationError).cause as ACPRequestError).code).toBe(-32601);
+      }
+
+      conn.disconnect();
+    });
+
     it("newSession() delegates to protocol.newSession()", async () => {
       const ctrl = createControllableStream();
       const { axon } = createMockAxon(ctrl);
@@ -597,6 +631,63 @@ describe("ACPAxonConnection", () => {
 
       expect(conn.protocol.prompt).toHaveBeenCalledOnce();
       expect(result).toBe(mockResult);
+      conn.disconnect();
+    });
+
+    it("prompt() converts raw JSON-RPC error rejections into ACPRequestError", async () => {
+      // The upstream @agentclientprotocol/sdk rejects with the raw `error`
+      // object (`{ code, message, data }`) rather than an Error — this would
+      // otherwise stringify to "[object Object]" at the call site.
+      const ctrl = createControllableStream();
+      const { axon } = createMockAxon(ctrl);
+      const conn = new ACPAxonConnection(axon as never, { id: "dbx-test" } as never, {
+        replay: false,
+      });
+      await conn.connect();
+
+      conn.protocol.prompt = vi.fn().mockRejectedValue({
+        code: -32000,
+        message: "You have exhausted your daily quota on this model.",
+        data: { event_type: "turn.failed" },
+      });
+
+      try {
+        await conn.prompt({
+          sessionId: "s-1",
+          prompt: [{ type: "text", text: "Hello" }],
+        } as never);
+        expect.fail("Expected ACPRequestError to be thrown");
+      } catch (err) {
+        expect(err).toBeInstanceOf(Error);
+        expect(err).toBeInstanceOf(ACPRequestError);
+        expect((err as ACPRequestError).code).toBe(-32000);
+        expect((err as ACPRequestError).data).toEqual({ event_type: "turn.failed" });
+        expect((err as ACPRequestError).message).toBe(
+          '[-32000] You have exhausted your daily quota on this model. {"event_type":"turn.failed"}',
+        );
+      }
+
+      conn.disconnect();
+    });
+
+    it("prompt() rethrows real Error instances unchanged", async () => {
+      const ctrl = createControllableStream();
+      const { axon } = createMockAxon(ctrl);
+      const conn = new ACPAxonConnection(axon as never, { id: "dbx-test" } as never, {
+        replay: false,
+      });
+      await conn.connect();
+
+      const original = new Error("transport closed");
+      conn.protocol.prompt = vi.fn().mockRejectedValue(original);
+
+      await expect(
+        conn.prompt({
+          sessionId: "s-1",
+          prompt: [{ type: "text", text: "Hello" }],
+        } as never),
+      ).rejects.toBe(original);
+
       conn.disconnect();
     });
 

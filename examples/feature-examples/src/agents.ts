@@ -67,7 +67,7 @@ export const AGENTS: AgentConfig[] = [
     brokerMount: {
       protocol: "acp",
       agentBinary: "gemini",
-      launchArgs: ["--experimental-acp", "--yolo"],
+      launchArgs: ["--acp", "--yolo", "--skip-trust"],
     },
     secrets: { GEMINI_API_KEY: "GEMINI_API_KEY" },
   },

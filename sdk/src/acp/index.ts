@@ -62,6 +62,7 @@ export {
   ClientSideConnection,
   PROTOCOL_VERSION,
 } from "@agentclientprotocol/sdk";
+export { ACPRequestError, isACPRequestError } from "../shared/errors/acp-request-error.js";
 export {
   type AgentOriginEvent,
   isFromAgent,
