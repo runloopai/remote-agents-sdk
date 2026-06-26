@@ -5,6 +5,7 @@ import {
   createMockAxon,
   drain,
   makeAgentEvent,
+  makeSystemEvent,
   makeSystemEventWithRawPayload,
   makeUserEvent,
   type PublishCall,
@@ -388,6 +389,182 @@ describe("axonStream", () => {
         expect(sysErr.sequence).toBe(42);
       }
     });
+
+    it("converts turn.failed SYSTEM_EVENT to JSON-RPC error for the pending request", async () => {
+      const ctrl = createControllableStream();
+      const { axon } = createMockAxon(ctrl.stream);
+
+      const { readable, writable } = axonStream({ axon: axon as never });
+
+      const writer = writable.getWriter();
+      await writer.write({
+        jsonrpc: "2.0",
+        id: 7,
+        method: "session/prompt",
+        params: { sessionId: "s1", prompt: [{ type: "text", text: "hi" }] },
+      } as never);
+      writer.releaseLock();
+
+      ctrl.push(
+        makeSystemEvent("turn.failed", {
+          turn_id: "t-1",
+          error: "You have exhausted your daily quota on this model.",
+          stop_reason: "Error",
+        }),
+      );
+      ctrl.end();
+
+      const messages = await drain(readable);
+
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatchObject({
+        jsonrpc: "2.0",
+        id: 7,
+        error: {
+          code: -32000,
+          message: "You have exhausted your daily quota on this model.",
+          data: { event_type: "turn.failed" },
+        },
+      });
+    });
+
+    it("rejects every pending request when turn.failed arrives with multiple in-flight", async () => {
+      const ctrl = createControllableStream();
+      const { axon } = createMockAxon(ctrl.stream);
+
+      const { readable, writable } = axonStream({ axon: axon as never });
+
+      const writer = writable.getWriter();
+      await writer.write({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "session/prompt",
+        params: { sessionId: "s1", prompt: [{ type: "text", text: "a" }] },
+      } as never);
+      await writer.write({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "session/new",
+        params: {},
+      } as never);
+      writer.releaseLock();
+
+      ctrl.push(makeSystemEvent("turn.failed", { error: "boom" }));
+      ctrl.end();
+
+      const messages = await drain(readable);
+
+      expect(messages).toHaveLength(2);
+      expect(messages[0]).toMatchObject({
+        id: 1,
+        error: { code: -32000, message: "boom", data: { event_type: "turn.failed" } },
+      });
+      expect(messages[1]).toMatchObject({
+        id: 2,
+        error: { code: -32000, message: "boom", data: { event_type: "turn.failed" } },
+      });
+    });
+
+    it("falls back to raw payload string when turn.failed payload has no error field", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const ctrl = createControllableStream();
+        const { axon } = createMockAxon(ctrl.stream);
+
+        const { readable, writable } = axonStream({ axon: axon as never });
+
+        const writer = writable.getWriter();
+        await writer.write({
+          jsonrpc: "2.0",
+          id: 9,
+          method: "session/prompt",
+          params: { sessionId: "s1", prompt: [{ type: "text", text: "hi" }] },
+        } as never);
+        writer.releaseLock();
+
+        ctrl.push(makeSystemEventWithRawPayload("turn.failed", "raw failure string"));
+        ctrl.end();
+
+        const messages = await drain(readable);
+
+        expect(messages).toHaveLength(1);
+        expect(messages[0]).toMatchObject({
+          jsonrpc: "2.0",
+          id: 9,
+          error: {
+            code: -32000,
+            message: "raw failure string",
+            data: { event_type: "turn.failed" },
+          },
+        });
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it("keeps the SSE stream open after turn.failed so subsequent prompts can flow", async () => {
+      const ctrl = createControllableStream();
+      const { axon } = createMockAxon(ctrl.stream);
+
+      const { readable, writable } = axonStream({ axon: axon as never });
+
+      const writer = writable.getWriter();
+      await writer.write({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "session/prompt",
+        params: { sessionId: "s1", prompt: [{ type: "text", text: "first" }] },
+      } as never);
+
+      ctrl.push(makeSystemEvent("turn.failed", { turn_id: "t-1", error: "quota exhausted" }));
+
+      const reader = readable.getReader();
+      const firstMsg = await reader.read();
+      expect(firstMsg.done).toBe(false);
+      expect(firstMsg.value).toMatchObject({
+        id: 1,
+        error: { code: -32000, message: "quota exhausted" },
+      });
+
+      // Stream is still alive — a second prompt + response can flow.
+      await writer.write({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "session/prompt",
+        params: { sessionId: "s1", prompt: [{ type: "text", text: "second" }] },
+      } as never);
+      writer.releaseLock();
+      ctrl.push(makeAgentEvent("session/prompt", { stopReason: "end_turn" }));
+      ctrl.end();
+
+      const secondMsg = await reader.read();
+      expect(secondMsg.done).toBe(false);
+      expect(secondMsg.value).toMatchObject({
+        jsonrpc: "2.0",
+        id: 2,
+        result: { stopReason: "end_turn" },
+      });
+      const closing = await reader.read();
+      expect(closing.done).toBe(true);
+      reader.releaseLock();
+    });
+
+    it("does not emit a JSON-RPC error for turn.failed when there are no pending requests", async () => {
+      const ctrl = createControllableStream();
+      const { axon } = createMockAxon(ctrl.stream);
+
+      const { readable } = axonStream({ axon: axon as never });
+
+      ctrl.push(makeSystemEvent("turn.failed", { error: "boom" }));
+      ctrl.push(makeAgentEvent("session/update", { sessionUpdate: "usage_update" }));
+      ctrl.end();
+
+      const messages = await drain(readable);
+
+      // The session/update notification still flows; turn.failed alone produces nothing.
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatchObject({ method: "session/update" });
+    });
   });
 
   describe("auto-reconnect", () => {
@@ -584,6 +761,50 @@ describe("axonStream", () => {
       expect(published[0].event_type).toBe("session/initialize");
       expect(JSON.parse(published[0].payload)).toEqual({ protocolVersion: 1 });
       expect(published[0].origin).toBe("USER_EVENT");
+      expect(published[0].source).toBe("acp-sdk-client");
+    });
+
+    it("publishes with a custom source when provided via options", async () => {
+      const { writable } = axonStream({ axon: axon as never, source: "my-custom-client" });
+
+      await writeMessage(writable, {
+        jsonrpc: "2.0",
+        method: "session/cancel",
+        params: { sessionId: "s1" },
+      });
+
+      expect(published[0].source).toBe("my-custom-client");
+    });
+
+    it("resolves the source lazily on each publish when given a resolver", async () => {
+      let current = "first";
+      const { writable } = axonStream({ axon: axon as never, source: () => current });
+
+      await writeMessage(writable, {
+        jsonrpc: "2.0",
+        method: "session/cancel",
+        params: { sessionId: "s1" },
+      });
+      current = "second";
+      await writeMessage(writable, {
+        jsonrpc: "2.0",
+        method: "session/cancel",
+        params: { sessionId: "s2" },
+      });
+
+      expect(published[0].source).toBe("first");
+      expect(published[1].source).toBe("second");
+    });
+
+    it("falls back to the default when the resolver returns undefined", async () => {
+      const { writable } = axonStream({ axon: axon as never, source: () => undefined });
+
+      await writeMessage(writable, {
+        jsonrpc: "2.0",
+        method: "session/cancel",
+        params: { sessionId: "s1" },
+      });
+
       expect(published[0].source).toBe("acp-sdk-client");
     });
 

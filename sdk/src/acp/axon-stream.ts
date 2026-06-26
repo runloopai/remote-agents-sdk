@@ -6,6 +6,7 @@ import { isSystemError, SystemError } from "../shared/errors/system-error.js";
 import { makeDefaultOnError } from "../shared/logging.js";
 import { isFromAgent, isFromUser } from "../shared/origin-guards.js";
 import { getJsonRpcId, isNonNullObject } from "../shared/structural-guards.js";
+import { isTurnFailedAxonEvent, tryParseSystemEvent } from "../shared/timeline.js";
 import type { LogFn } from "../shared/types.js";
 import type { AxonStreamOptions } from "./types.js";
 
@@ -19,6 +20,9 @@ const NOTIFICATION_TYPES = new Set<string>([
   CLIENT_METHODS.session_update,
   CLIENT_METHODS.session_elicitation_complete,
 ]);
+
+/** Default `source` used when publishing events from the ACP SDK stream. */
+const DEFAULT_SOURCE = "acp-sdk-client";
 
 /**
  * Creates an ACP-compatible `Stream` backed by an Axon channel from
@@ -41,6 +45,13 @@ const NOTIFICATION_TYPES = new Set<string>([
 export function axonStream(options: AxonStreamOptions): Stream {
   const { axon, signal, onAxonEvent, log, afterSequence, replayTargetSequence } = options;
   const onError = options.onError ?? makeDefaultOnError("axonStream");
+  const optionSource = options.source;
+  // Resolve lazily on each publish so callers can change the source between
+  // messages (e.g. via a resolver closing over mutable state).
+  const resolveSource = (): string => {
+    const value = typeof optionSource === "function" ? optionSource() : optionSource;
+    return value ?? DEFAULT_SOURCE;
+  };
 
   // Maps outbound JSON-RPC request method -> id so we can correlate
   // the broker's response (which only carries event_type, not an id).
@@ -65,7 +76,14 @@ export function axonStream(options: AxonStreamOptions): Stream {
     replayTargetSequence,
   );
 
-  const writable = createWritable(axon, pendingRequests, pendingClientRequests, onError, log);
+  const writable = createWritable(
+    axon,
+    pendingRequests,
+    pendingClientRequests,
+    onError,
+    log,
+    resolveSource,
+  );
 
   return { readable, writable };
 }
@@ -168,6 +186,33 @@ function createReadable(
             }
 
             // --- Normal (live) processing ---
+
+            // Reject in-flight requests on `turn.failed` SYSTEM_EVENTs but
+            // keep the SSE loop alive — the agent process is still healthy
+            // and can accept further sessions/prompts.
+            if (isTurnFailedAxonEvent(axonEvent)) {
+              const parsed = tryParseSystemEvent(axonEvent);
+              const message =
+                parsed?.type === "turn.failed"
+                  ? parsed.error || "turn failed"
+                  : String(axonEvent.payload ?? "turn failed");
+              log?.("read", `#${totalEvents} TURN_FAILED: ${message}`);
+              for (const [method, id] of pendingRequests) {
+                if (id !== undefined && id !== null) {
+                  controller.enqueue({
+                    jsonrpc: "2.0",
+                    id,
+                    error: {
+                      code: -32000,
+                      message,
+                      data: { event_type: axonEvent.event_type },
+                    },
+                  });
+                }
+                pendingRequests.delete(method);
+              }
+              continue;
+            }
 
             if (isSystemError(axonEvent)) {
               log?.("read", `#${totalEvents} SYSTEM_ERROR: ${axonEvent.payload}`);
@@ -419,6 +464,7 @@ function axonEventToJsonRpc(
  * @param axon                 - Axon channel to publish to.
  * @param pendingRequests      - Shared map tracking outbound request method → JSON-RPC ID.
  * @param pendingClientRequests - Shared map tracking agent-to-client request ID → method.
+ * @param resolveSource         - Resolver invoked per publish to obtain the `source`.
  * @returns A `WritableStream` that accepts JSON-RPC messages.
  */
 function createWritable(
@@ -427,6 +473,7 @@ function createWritable(
   pendingClientRequests: Map<string | number, string>,
   onError: (error: unknown) => void,
   log: LogFn | undefined,
+  resolveSource: () => string,
 ): WritableStream<AnyMessage> {
   return new WritableStream<AnyMessage>({
     async write(message) {
@@ -437,7 +484,7 @@ function createWritable(
           event_type: eventType,
           origin: "USER_EVENT",
           payload,
-          source: "acp-sdk-client",
+          source: resolveSource(),
         });
       } catch (err) {
         onError(err);

@@ -93,7 +93,7 @@ conn.onTimelineEvent((event) => {
       // Typed ACP payload — narrow further with event.eventType
       break;
     case "system":
-      // event.data: { type: "turn.started" | "turn.completed", turnId, ... }
+      // event.data: { type: "turn.started" | "turn.completed" | "turn.failed", turnId, ... }
       break;
     case "unknown":
       break;
@@ -487,7 +487,7 @@ conn.onTimelineEvent((event: ACPTimelineEvent) => {
       // Use isFromAgent(event) / isFromUser(event) to check direction (or event.axonEvent.origin directly)
       break;
     case "system":
-      // event.data is SystemEvent: { type: "turn.started", turnId } | { type: "turn.completed", turnId, stopReason? } | { type: "broker.error", message }
+      // event.data is SystemEvent: { type: "turn.started", turnId } | { type: "turn.completed", turnId, stopReason? } | { type: "turn.failed", turnId, error, stopReason? } | { type: "broker.error", message }
       break;
     case "unknown":
       // event.data is null — use axonEvent to identify and parse the event yourself
@@ -679,8 +679,15 @@ Typed representation of recognized broker system events:
 ```typescript
 type SystemEvent =
   | { type: "turn.started"; turnId: string }
-  | { type: "turn.completed"; turnId: string; stopReason?: string };
+  | { type: "turn.completed"; turnId: string; stopReason?: string }
+  | { type: "turn.failed"; turnId: string; error: string; stopReason?: string }
+  | { type: "broker.error"; message: string };
 ```
+
+`turn.failed` is emitted when the broker terminates an in-flight turn (for
+example, on a model error). The Axon stream layer also rejects any pending
+ACP JSON-RPC request with a JSON-RPC error (`code: -32000`, `message: error`),
+keeping the SSE stream alive so subsequent prompts can still flow.
 
 ### `WireData` (Claude module)
 
@@ -720,6 +727,10 @@ This means **`await conn.prompt(...)` returns before the agent's response text h
             break;
           case SYSTEM_EVENT_TYPES.TURN_COMPLETED:
             // All content for this turn has been delivered
+            break;
+          case SYSTEM_EVENT_TYPES.TURN_FAILED:
+            // Turn was terminated by the broker (e.g. model error) —
+            // surface event.data.error to the user
             break;
         }
         break;

@@ -103,6 +103,7 @@ export type {
   BrokerErrorTimelineEvent,
   DevboxLifecycleTimelineEvent,
   TurnCompletedTimelineEvent,
+  TurnFailedTimelineEvent,
   TurnStartedTimelineEvent,
 } from "./timeline-event-guards.js";
 export {
@@ -121,6 +122,7 @@ export {
   isDevboxLifecycleEvent,
   isSystemTimelineEvent,
   isTurnCompletedEvent,
+  isTurnFailedEvent,
   isTurnStartedEvent,
   isUnknownTimelineEvent,
 } from "./timeline-event-guards.js";

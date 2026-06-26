@@ -12,6 +12,7 @@ import {
   isClaudeSystemInitEvent,
   isSystemTimelineEvent,
   isTurnCompletedEvent,
+  isTurnFailedEvent,
   isTurnStartedEvent,
   isUnknownTimelineEvent,
 } from "./timeline-event-guards.js";
@@ -47,14 +48,16 @@ function makeProtocolTimelineEvent(
 }
 
 function makeSystemTimelineEvent(
-  type: "turn.started" | "turn.completed" | "broker.error",
+  type: "turn.started" | "turn.completed" | "turn.failed" | "broker.error",
 ): ClaudeTimelineEvent {
   const data =
     type === "turn.started"
       ? { type, turnId: "t-1" }
       : type === "turn.completed"
         ? { type, turnId: "t-1" }
-        : { type, message: "test error" };
+        : type === "turn.failed"
+          ? { type, turnId: "t-1", error: "boom" }
+          : { type, message: "test error" };
   return {
     kind: "system",
     data,
@@ -112,11 +115,32 @@ describe("isTurnCompletedEvent", () => {
 
   it("returns false for other system events", () => {
     expect(isTurnCompletedEvent(makeSystemTimelineEvent("turn.started"))).toBe(false);
+    expect(isTurnCompletedEvent(makeSystemTimelineEvent("turn.failed"))).toBe(false);
     expect(isTurnCompletedEvent(makeSystemTimelineEvent("broker.error"))).toBe(false);
   });
 
   it("returns false for protocol events", () => {
     expect(isTurnCompletedEvent(makeProtocolTimelineEvent("assistant"))).toBe(false);
+  });
+});
+
+describe("isTurnFailedEvent", () => {
+  it("returns true for turn.failed system events", () => {
+    expect(isTurnFailedEvent(makeSystemTimelineEvent("turn.failed"))).toBe(true);
+  });
+
+  it("returns false for other system events", () => {
+    expect(isTurnFailedEvent(makeSystemTimelineEvent("turn.started"))).toBe(false);
+    expect(isTurnFailedEvent(makeSystemTimelineEvent("turn.completed"))).toBe(false);
+    expect(isTurnFailedEvent(makeSystemTimelineEvent("broker.error"))).toBe(false);
+  });
+
+  it("returns false for protocol events", () => {
+    expect(isTurnFailedEvent(makeProtocolTimelineEvent("assistant"))).toBe(false);
+  });
+
+  it("returns false for unknown events", () => {
+    expect(isTurnFailedEvent(makeUnknownTimelineEvent())).toBe(false);
   });
 });
 

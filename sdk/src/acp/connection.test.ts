@@ -81,6 +81,40 @@ describe("ACPAxonConnection", () => {
     });
   });
 
+  describe("source / setSource()", () => {
+    it("defaults to undefined (stream supplies the built-in default)", () => {
+      const ctrl = createControllableStream();
+      const { axon } = createMockAxon(ctrl);
+
+      const conn = new ACPAxonConnection(axon as never, { id: "dbx-test" } as never);
+      expect(conn.source).toBeUndefined();
+      conn.disconnect();
+    });
+
+    it("reflects the value passed via options", () => {
+      const ctrl = createControllableStream();
+      const { axon } = createMockAxon(ctrl);
+
+      const conn = new ACPAxonConnection(axon as never, { id: "dbx-test" } as never, {
+        source: "from-options",
+      });
+      expect(conn.source).toBe("from-options");
+      conn.disconnect();
+    });
+
+    it("updates the current source via setSource()", () => {
+      const ctrl = createControllableStream();
+      const { axon } = createMockAxon(ctrl);
+
+      const conn = new ACPAxonConnection(axon as never, { id: "dbx-test" } as never);
+      conn.setSource("my-client");
+      expect(conn.source).toBe("my-client");
+      conn.setSource(undefined);
+      expect(conn.source).toBeUndefined();
+      conn.disconnect();
+    });
+  });
+
   describe("default permission handler", () => {
     it("prefers allow_always when available", async () => {
       const ctrl = createControllableStream();
@@ -982,6 +1016,39 @@ describe("ACPAxonConnection", () => {
       conn.disconnect();
     });
 
+    it("classifies SYSTEM_EVENT turn.failed as system", async () => {
+      const ctrl = createControllableStream();
+      const { axon } = createMockAxon(ctrl);
+      const conn = new ACPAxonConnection(axon as never, { id: "dbx-test" } as never, {
+        replay: false,
+      });
+      await conn.connect();
+
+      const events: ACPTimelineEvent[] = [];
+      conn.onTimelineEvent((ev) => events.push(ev));
+
+      ctrl.push(
+        makeSystemEvent("turn.failed", {
+          turn_id: "t-1",
+          error: "You have exhausted your daily quota on this model.",
+          stop_reason: "Error",
+        }),
+      );
+
+      await waitFor(() => events.length > 0);
+      expect(events[0].kind).toBe("system");
+      if (events[0].kind === "system") {
+        expect(events[0].data.type).toBe("turn.failed");
+        if (events[0].data.type === "turn.failed") {
+          expect(events[0].data.turnId).toBe("t-1");
+          expect(events[0].data.error).toBe("You have exhausted your daily quota on this model.");
+          expect(events[0].data.stopReason).toBe("Error");
+        }
+      }
+
+      conn.disconnect();
+    });
+
     it("classifies SYSTEM_EVENT broker.error as system", () => {
       const ev = makeFullAxonEvent({
         event_type: "broker.error",
@@ -1141,6 +1208,7 @@ describe("isACPProtocolEventType", () => {
   it("returns false for system event types", () => {
     expect(isACPProtocolEventType("turn.started")).toBe(false);
     expect(isACPProtocolEventType("turn.completed")).toBe(false);
+    expect(isACPProtocolEventType("turn.failed")).toBe(false);
     expect(isACPProtocolEventType("broker.error")).toBe(false);
   });
 

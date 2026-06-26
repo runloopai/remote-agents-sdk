@@ -3,6 +3,7 @@
  */
 
 import type { AxonEventView } from "@runloop/api-client/resources/axons";
+import { SYSTEM_EVENT_ORIGIN } from "./errors/system-error.js";
 import type {
   DevboxLifecycleKind,
   SystemEvent,
@@ -23,6 +24,7 @@ import type {
 export const SYSTEM_EVENT_TYPES = {
   TURN_STARTED: "turn.started",
   TURN_COMPLETED: "turn.completed",
+  TURN_FAILED: "turn.failed",
   BROKER_ERROR: "broker.error",
   DEVBOX_RUNNING: "devbox.running",
   DEVBOX_SUSPENDED: "devbox.suspended",
@@ -40,6 +42,26 @@ export function isSystemEventType(eventType: string): boolean {
   return SYSTEM_EVENT_TYPE_SET.has(eventType);
 }
 
+/**
+ * Checks whether a raw Axon event is a `turn.failed` SYSTEM_EVENT.
+ *
+ * Counterpart to {@link isSystemError} for the per-turn failure case.
+ * Use in the Axon-stream layer (before timeline classification) to detect
+ * turn-level failures and reject in-flight JSON-RPC requests without
+ * tearing the SSE stream down.
+ *
+ * @param event - The raw Axon event to check.
+ * @returns `true` if the event is a `turn.failed` system event.
+ *
+ * @category Utilities
+ * @internal
+ */
+export function isTurnFailedAxonEvent(event: AxonEventView): boolean {
+  return (
+    event.origin === SYSTEM_EVENT_ORIGIN && event.event_type === SYSTEM_EVENT_TYPES.TURN_FAILED
+  );
+}
+
 // ---------------------------------------------------------------------------
 // System event payload shapes
 // ---------------------------------------------------------------------------
@@ -50,6 +72,12 @@ interface TurnStartedPayload {
 
 interface TurnCompletedPayload {
   turn_id?: string;
+  stop_reason?: string;
+}
+
+interface TurnFailedPayload {
+  turn_id?: string;
+  error?: string;
   stop_reason?: string;
 }
 
@@ -136,6 +164,20 @@ export function tryParseSystemEvent(ev: AxonEventView): SystemEvent | null {
       type: "turn.completed",
       turnId,
       stopReason: (parsed as TurnCompletedPayload).stop_reason,
+    };
+  }
+
+  if (ev.event_type === SYSTEM_EVENT_TYPES.TURN_FAILED) {
+    const parsed = tryParseTimelinePayload<TurnFailedPayload>({ axonEvent: ev });
+    // Mirror the broker.error fallback: when the payload is unparseable or
+    // missing the `error` field, surface the raw payload string.
+    const error =
+      parsed != null ? (parsed.error ?? String(ev.payload ?? "")) : String(ev.payload ?? "");
+    return {
+      type: "turn.failed",
+      turnId: parsed?.turn_id ?? "",
+      error,
+      stopReason: parsed?.stop_reason,
     };
   }
 

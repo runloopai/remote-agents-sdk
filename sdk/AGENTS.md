@@ -182,7 +182,7 @@ chat UIs that interleave protocol events, system events, and custom events.
 |------|-----------|------|
 | `acp_protocol` | `SessionUpdate \| unknown` | Known ACP protocol event (agent or client method) |
 | `claude_protocol` | `SDKMessage` | Known Claude protocol event |
-| `system` | `SystemEvent` | Broker system event (`turn.started`, `turn.completed`, `broker.error`) |
+| `system` | `SystemEvent` | Broker system event (`turn.started`, `turn.completed`, `turn.failed`, `broker.error`) |
 | `unknown` | `null` | Anything else — inspect `axonEvent` for details |
 
 Every timeline event has `{ kind, data, axonEvent }` where `axonEvent` is the
@@ -198,7 +198,7 @@ conn.onTimelineEvent((event) => {
       // event.data is SessionUpdate | unknown
       break;
     case "system":
-      // event.data is SystemEvent ({ type: "turn.started" | "turn.completed", turnId, ... })
+      // event.data is SystemEvent ({ type: "turn.started" | "turn.completed" | "turn.failed", turnId, ... })
       break;
     case "unknown":
       // event.data is null — check event.axonEvent for raw data

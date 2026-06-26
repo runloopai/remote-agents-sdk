@@ -136,6 +136,14 @@ export class ACPAxonConnection {
   /** Optional teardown callback invoked by {@link disconnect}. */
   private disconnectFn: (() => void | Promise<void>) | undefined;
 
+  /**
+   * The `source` attached to outbound events. Read by the stream at publish
+   * time, so mutating it via {@link setSource} affects subsequent messages
+   * without reconnecting. `undefined` means the stream's built-in default
+   * is used.
+   */
+  private currentSource: string | undefined;
+
   private log: LogFn;
 
   /**
@@ -159,6 +167,7 @@ export class ACPAxonConnection {
     this.handleError = options?.onError ?? makeDefaultOnError("ACPAxonConnection");
     this.handlePermission = options?.requestPermission;
     this.disconnectFn = options?.onDisconnect;
+    this.currentSource = options?.source;
     this.axonEventListeners = new ListenerSet<AxonEventListener>(this.handleError);
     this.timelineEventListeners = new ListenerSet<TimelineEventListener<ACPTimelineEvent>>(
       this.handleError,
@@ -200,6 +209,7 @@ export class ACPAxonConnection {
       log: verbose ? (tag, ...args) => this.log(tag, ...args) : undefined,
       afterSequence: this.options.afterSequence,
       replayTargetSequence,
+      source: () => this.currentSource,
     });
 
     const customCreateClient = this.options.createClient;
@@ -289,6 +299,34 @@ export class ACPAxonConnection {
   prompt(params: PromptRequest): Promise<PromptResponse> {
     this.ensureConnected();
     return this.protocol.prompt(params);
+  }
+
+  /**
+   * The `source` string currently attached to events published by this
+   * connection (e.g. prompts via {@link prompt}). `undefined` means the
+   * built-in default (`"acp-sdk-client"`) is used.
+   */
+  get source(): string | undefined {
+    return this.currentSource;
+  }
+
+  /**
+   * Sets the `source` string attached to subsequently published events.
+   *
+   * Takes effect immediately and applies to every later message published
+   * through the stream (such as {@link prompt}) until changed again — set it
+   * before a message to control that message's `source`. Pass `undefined` to
+   * restore the built-in default.
+   *
+   * Because prompts share one underlying stream, set the source before
+   * issuing a prompt and avoid overlapping prompts that need different
+   * sources — concurrent in-flight messages observe whichever value is
+   * current when each is published.
+   *
+   * @param source - The source identifier, or `undefined` for the default.
+   */
+  setSource(source: string | undefined): void {
+    this.currentSource = source;
   }
 
   /**
@@ -395,7 +433,8 @@ export class ACPAxonConnection {
    *
    * Every Axon event on the channel is classified into one of:
    * - `acp_protocol` — a known ACP protocol event (agent or client method)
-   * - `system` — a broker system event (`turn.started`, `turn.completed`, `broker.error`)
+   * - `system` — a broker system event (`turn.started`, `turn.completed`,
+   *   `turn.failed`, `broker.error`)
    * - `unknown` — anything else
    *
    * For a pull-based alternative, see {@link receiveTimelineEvents}.
@@ -566,7 +605,8 @@ export class ACPAxonConnection {
  * Classifies a raw Axon event into an {@link ACPTimelineEvent}.
  *
  * Classification rules:
- * 1. `SYSTEM_EVENT` with `turn.started` / `turn.completed` / `broker.error` -> `system`
+ * 1. `SYSTEM_EVENT` with `turn.started` / `turn.completed` / `turn.failed` /
+ *    `broker.error` -> `system`
  * 2. Known ACP protocol `event_type` (agent or client method) -> `acp_protocol`
  * 3. Everything else -> `unknown`
  *

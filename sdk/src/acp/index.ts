@@ -131,6 +131,7 @@ export type {
   ElicitationCompleteTimelineEvent,
   ElicitationTimelineEvent,
   TurnCompletedTimelineEvent,
+  TurnFailedTimelineEvent,
   TurnStartedTimelineEvent,
 } from "./timeline-event-guards.js";
 export {
@@ -149,6 +150,7 @@ export {
   isSessionUpdateEvent,
   isSystemTimelineEvent,
   isTurnCompletedEvent,
+  isTurnFailedEvent,
   isTurnStartedEvent,
   isUnknownTimelineEvent,
 } from "./timeline-event-guards.js";

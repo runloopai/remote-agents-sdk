@@ -39,6 +39,14 @@ export type TurnCompletedTimelineEvent = SystemTimelineEvent & {
 };
 
 /**
+ * Narrowed type for a `turn.failed` system event.
+ * @category Timeline
+ */
+export type TurnFailedTimelineEvent = SystemTimelineEvent & {
+  data: { type: "turn.failed"; turnId: string; error: string; stopReason?: string };
+};
+
+/**
  * Narrowed type for a `broker.error` system event.
  * @category Timeline
  */
@@ -88,6 +96,20 @@ export function isTurnCompletedEvent(
   return (
     event.kind === "system" &&
     (event.data as { type?: string }).type === SYSTEM_EVENT_TYPES.TURN_COMPLETED
+  );
+}
+
+/**
+ * Type guard for `turn.failed` system events.
+ *
+ * @param event - The timeline event to test.
+ * @returns `true` if `event` is a turn-failed system event.
+ * @category Timeline
+ */
+export function isTurnFailedEvent(event: BaseTimelineEvent): event is TurnFailedTimelineEvent {
+  return (
+    event.kind === "system" &&
+    (event.data as { type?: string }).type === SYSTEM_EVENT_TYPES.TURN_FAILED
   );
 }
 

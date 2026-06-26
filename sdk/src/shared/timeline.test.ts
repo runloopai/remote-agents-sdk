@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { makeFullAxonEvent as makeAxonEvent } from "../__test-utils__/mock-axon.js";
-import { createClassifier, tryParseSystemEvent, tryParseTimelinePayload } from "./timeline.js";
+import {
+  createClassifier,
+  isTurnFailedAxonEvent,
+  tryParseSystemEvent,
+  tryParseTimelinePayload,
+} from "./timeline.js";
 
 describe("tryParseTimelinePayload", () => {
   it("parses a JSON string payload", () => {
@@ -64,6 +69,68 @@ describe("tryParseSystemEvent", () => {
       turnId: "t-3",
       stopReason: undefined,
     });
+  });
+
+  it("parses turn.failed with full payload", () => {
+    const ev = makeAxonEvent({
+      event_type: "turn.failed",
+      payload: JSON.stringify({
+        turn_id: "t-4",
+        error: "You have exhausted your daily quota on this model.",
+        stop_reason: "Error",
+      }),
+    });
+    expect(tryParseSystemEvent(ev)).toEqual({
+      type: "turn.failed",
+      turnId: "t-4",
+      error: "You have exhausted your daily quota on this model.",
+      stopReason: "Error",
+    });
+  });
+
+  it("parses turn.failed with missing turn_id and stop_reason", () => {
+    const ev = makeAxonEvent({
+      event_type: "turn.failed",
+      payload: JSON.stringify({ error: "boom" }),
+    });
+    expect(tryParseSystemEvent(ev)).toEqual({
+      type: "turn.failed",
+      turnId: "",
+      error: "boom",
+      stopReason: undefined,
+    });
+  });
+
+  it("parses turn.failed missing error field falls back to stringified payload", () => {
+    const ev = makeAxonEvent({
+      event_type: "turn.failed",
+      payload: JSON.stringify({ turn_id: "t-5", stop_reason: "Error" }),
+    });
+    expect(tryParseSystemEvent(ev)).toEqual({
+      type: "turn.failed",
+      turnId: "t-5",
+      error: JSON.stringify({ turn_id: "t-5", stop_reason: "Error" }),
+      stopReason: "Error",
+    });
+  });
+
+  it("parses turn.failed with raw string payload", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const ev = makeAxonEvent({
+        event_type: "turn.failed",
+        payload: "raw failure string",
+      });
+      expect(tryParseSystemEvent(ev)).toEqual({
+        type: "turn.failed",
+        turnId: "",
+        error: "raw failure string",
+        stopReason: undefined,
+      });
+      expect(warnSpy).toHaveBeenCalledOnce();
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("parses broker.error with message field", () => {
@@ -264,6 +331,44 @@ describe("tryParseSystemEvent", () => {
     });
     expect(tryParseSystemEvent(ev)).toBeNull();
     warnSpy.mockRestore();
+  });
+});
+
+describe("isTurnFailedAxonEvent", () => {
+  it("returns true for SYSTEM_EVENT origin with turn.failed event_type", () => {
+    const ev = makeAxonEvent({
+      origin: "SYSTEM_EVENT",
+      event_type: "turn.failed",
+      payload: JSON.stringify({ error: "boom" }),
+    });
+    expect(isTurnFailedAxonEvent(ev)).toBe(true);
+  });
+
+  it("returns false for SYSTEM_EVENT with a different event_type", () => {
+    const ev = makeAxonEvent({
+      origin: "SYSTEM_EVENT",
+      event_type: "turn.completed",
+      payload: JSON.stringify({ turn_id: "t-1" }),
+    });
+    expect(isTurnFailedAxonEvent(ev)).toBe(false);
+  });
+
+  it("returns false for turn.failed event_type with a non-SYSTEM origin", () => {
+    const ev = makeAxonEvent({
+      origin: "AGENT_EVENT",
+      event_type: "turn.failed",
+      payload: JSON.stringify({ error: "boom" }),
+    });
+    expect(isTurnFailedAxonEvent(ev)).toBe(false);
+  });
+
+  it("returns false for unrelated SYSTEM_EVENTs", () => {
+    const ev = makeAxonEvent({
+      origin: "SYSTEM_EVENT",
+      event_type: "broker.error",
+      payload: "agent crashed",
+    });
+    expect(isTurnFailedAxonEvent(ev)).toBe(false);
   });
 });
 

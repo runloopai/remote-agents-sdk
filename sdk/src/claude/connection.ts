@@ -205,6 +205,14 @@ export class ClaudeAxonConnection {
   /** Optional teardown callback invoked by {@link disconnect}. */
   private disconnectFn: (() => void | Promise<void>) | undefined;
 
+  /**
+   * The `source` attached to outbound events. Read by the transport at
+   * publish time, so mutating it via {@link setSource} affects subsequent
+   * messages without recreating the transport. `undefined` means the
+   * transport's built-in default is used.
+   */
+  private currentSource: string | undefined;
+
   private static readonly MESSAGE_QUEUE_HIGH_WATER_MARK = 1000;
 
   /** Buffer of SDK messages that arrived before a consumer called {@link nextMessage}. */
@@ -282,6 +290,7 @@ export class ClaudeAxonConnection {
     this.options = options ?? {};
     this.handleError = options?.onError ?? makeDefaultOnError("ClaudeAxonConnection");
     this.disconnectFn = options?.onDisconnect;
+    this.currentSource = options?.source;
     this.log = makeLogger("claude-sdk", options?.verbose ?? false);
     this.axonEventListeners = new ListenerSet<AxonEventListener>(this.handleError);
     this.timelineEventListeners = new ListenerSet<TimelineEventListener<ClaudeTimelineEvent>>(
@@ -335,6 +344,7 @@ export class ClaudeAxonConnection {
         },
         afterSequence: this.options.afterSequence,
         replayTargetSequence,
+        source: () => this.currentSource,
       });
     }
 
@@ -480,7 +490,8 @@ export class ClaudeAxonConnection {
    *
    * Every Axon event on the channel is classified into one of:
    * - `claude_protocol` — a known Claude protocol event (user or agent message)
-   * - `system` — a broker system event (`turn.started`, `turn.completed`, `broker.error`)
+   * - `system` — a broker system event (`turn.started`, `turn.completed`,
+   *   `turn.failed`, `broker.error`)
    * - `unknown` — anything else
    *
    * For a pull-based alternative, see {@link receiveTimelineEvents}.
@@ -887,6 +898,30 @@ export class ClaudeAxonConnection {
    * await conn.send("What files are in this directory?");
    * ```
    */
+  /**
+   * The `source` string currently attached to events published by this
+   * connection (e.g. user prompts via {@link send}). `undefined` means the
+   * built-in default (`"claude-sdk-client"`) is used.
+   */
+  get source(): string | undefined {
+    return this.currentSource;
+  }
+
+  /**
+   * Sets the `source` string attached to subsequently published events.
+   *
+   * Takes effect immediately and applies to every later message published
+   * through the transport (such as {@link send}) until changed again — set
+   * it before a message to control that message's `source`. Pass `undefined`
+   * to restore the built-in default. (The lower-level {@link publish} method
+   * is unaffected; it sets `source` directly from its params.)
+   *
+   * @param source - The source identifier, or `undefined` for the default.
+   */
+  setSource(source: string | undefined): void {
+    this.currentSource = source;
+  }
+
   async send(prompt: string | SDKUserMessage): Promise<void> {
     if (this.fatal) {
       throw new ConnectionStateError(
