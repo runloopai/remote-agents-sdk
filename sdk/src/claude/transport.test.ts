@@ -117,6 +117,35 @@ describe("AxonTransport", () => {
       });
     });
 
+    it("uses a custom source when provided via options", async () => {
+      const custom = new AxonTransport(axon as never, { source: "my-custom-client" });
+      await custom.connect();
+      await custom.write(JSON.stringify({ type: "user" }));
+
+      expect(axon.publish.mock.calls[0][0].source).toBe("my-custom-client");
+    });
+
+    it("resolves the source lazily on each write when given a resolver", async () => {
+      let current = "first";
+      const custom = new AxonTransport(axon as never, { source: () => current });
+      await custom.connect();
+
+      await custom.write(JSON.stringify({ type: "user" }));
+      current = "second";
+      await custom.write(JSON.stringify({ type: "user" }));
+
+      expect(axon.publish.mock.calls[0][0].source).toBe("first");
+      expect(axon.publish.mock.calls[1][0].source).toBe("second");
+    });
+
+    it("falls back to the default when the resolver returns undefined", async () => {
+      const custom = new AxonTransport(axon as never, { source: () => undefined });
+      await custom.connect();
+      await custom.write(JSON.stringify({ type: "user" }));
+
+      expect(axon.publish.mock.calls[0][0].source).toBe("claude-sdk-client");
+    });
+
     it("uses the type value itself when not in mapping table", async () => {
       await transport.connect();
       await transport.write(JSON.stringify({ type: "custom_type" }));
