@@ -144,7 +144,21 @@ export interface AxonTransportOptions {
    * yielded. After replay ends, only unresolved control requests are yielded.
    */
   replayTargetSequence?: number;
+
+  /**
+   * The `source` string attached to every published Axon event, or a
+   * resolver invoked at publish time to obtain it. Use the resolver form to
+   * change the `source` between messages without recreating the transport
+   * (e.g. `() => this.currentSource`). When omitted, or when the resolver
+   * returns `undefined`, the default is used.
+   *
+   * @defaultValue `"claude-sdk-client"`
+   */
+  source?: string | (() => string | undefined);
 }
+
+/** Default `source` used when publishing events from the Claude SDK transport. */
+const DEFAULT_SOURCE = "claude-sdk-client";
 
 /**
  * Yields all unresolved control requests from the replay buffer, then clears it.
@@ -187,6 +201,9 @@ export class AxonTransport implements Transport {
   /** When set, events up to this sequence are replayed without yielding to the read loop. */
   private replayTargetSequence: number | undefined;
 
+  /** The `source` (or resolver) attached to every published Axon event. */
+  private source: string | (() => string | undefined);
+
   private log: LogFn;
 
   /**
@@ -201,6 +218,16 @@ export class AxonTransport implements Transport {
     this.onAxonEvent = options?.onAxonEvent;
     this.lastSequence = options?.afterSequence;
     this.replayTargetSequence = options?.replayTargetSequence;
+    this.source = options?.source ?? DEFAULT_SOURCE;
+  }
+
+  /**
+   * Resolves the `source` to attach to an outbound event, invoking the
+   * resolver if one was provided and falling back to the default.
+   */
+  private resolveSource(): string {
+    const value = typeof this.source === "function" ? this.source() : this.source;
+    return value ?? DEFAULT_SOURCE;
   }
 
   /**
@@ -251,7 +278,7 @@ export class AxonTransport implements Transport {
       event_type: eventType,
       origin: "USER_EVENT",
       payload: data,
-      source: "claude-sdk-client",
+      source: this.resolveSource(),
     });
   }
 
