@@ -24,7 +24,7 @@ registerDebugRoutes(app, registry);
 const PORT = process.env.PORT ?? 3003;
 server.listen(PORT, () => {
   console.log(`Combined App server listening on http://localhost:${PORT}`);
-  console.log(`Start the Vite dev server with: bun run dev:client`);
+  console.log(`Open the app at http://localhost:5176 (Vite dev server)`);
   console.log(
     `RUNLOOP_API_KEY: ${process.env.RUNLOOP_API_KEY ? "set" : "NOT SET"}`,
   );
