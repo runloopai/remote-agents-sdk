@@ -260,6 +260,30 @@ describe("ClaudeAxonConnection", () => {
     });
   });
 
+  describe("source / setSource()", () => {
+    it("defaults to undefined (transport supplies the built-in default)", async () => {
+      const conn = await createConnectedClient(transport);
+      expect(conn.source).toBeUndefined();
+    });
+
+    it("reflects the value passed via options", async () => {
+      const axon = createMockAxon();
+      const conn = new ClaudeAxonConnection(axon as never, { id: "dbx-test" } as never, {
+        source: "from-options",
+        replay: false,
+      });
+      expect(conn.source).toBe("from-options");
+    });
+
+    it("updates the current source via setSource()", async () => {
+      const conn = await createConnectedClient(transport);
+      conn.setSource("my-client");
+      expect(conn.source).toBe("my-client");
+      conn.setSource(undefined);
+      expect(conn.source).toBeUndefined();
+    });
+  });
+
   describe("publish()", () => {
     it("delegates to axon.publish() with the provided params", async () => {
       const conn = await createConnectedClient(transport);
