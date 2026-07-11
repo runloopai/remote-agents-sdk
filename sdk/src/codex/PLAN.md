@@ -111,6 +111,33 @@ Pure addition; no connection yet.
 
 ### 2. Transport + connection — `transport.ts`, `connection.ts`, exports
 
+**Share with Claude instead of copy-pasting.** `ClaudeAxonConnection` and
+this connection want the same machinery, and implementing codex is the
+forcing function to hoist it into `sdk/src/shared/`. Before writing codex
+code, audit `claude/connection.ts` + `claude/transport.ts` and extract the
+protocol-agnostic parts as shared building blocks, refactoring the Claude
+module onto them in the same PR (behavior-preserving, its test suite is the
+guard):
+
+- Connection lifecycle skeleton: `connect()`/`disconnect()`/`abortStream()`,
+  replay-target resolution, read loop with single auto-reconnect, fatal
+  `SystemError` handling, `ConnectionStateError` state machine.
+- Pending-request correlation with timeouts (Claude keys on `request_id`,
+  codex on JSON-RPC id — same `Map<id, {resolve,reject}>` engine,
+  parameterized on id extraction).
+- Server-initiated-request dispatch with registered handlers + defaults
+  (Claude `control_request` subtypes ≈ codex approval methods), including
+  the replay buffering of unanswered requests.
+- Message queue / `nextMessage()` / `receiveAgentEvents()` pull surface and
+  the `onAxonEvent`/`onTimelineEvent`/`receiveTimelineEvents()` fan-out
+  (already mostly shared via `ListenerSet`/`timeline-generator`).
+
+What stays protocol-specific per module: frame parsing/serialization, the
+method↔`event_type` mapping, classification unions/guards, and the typed
+public methods (`send`, `interrupt`, `startThread`, …). If extraction of a
+piece turns risky mid-PR, prefer duplicating that piece and filing the
+hoist as a follow-up over destabilizing Claude — but the default is shared.
+
 - `CodexAxonTransport`: `connect`/`reconnect` over `axon.subscribeSse`,
   `write(frame)` → `axon.publish({ event_type: method-or-"response", origin:
   "USER_EVENT", payload, source: "codex-sdk-client" })`, `readMessages()`
@@ -190,7 +217,11 @@ usage with this connection. Its provider layer needs, concretely:
 1. `feat(sdk): vendor codex app-server protocol types and event classification`
    — step 1; pure addition, independently reviewable against the schemas.
 2. `feat(sdk): add CodexAxonConnection and transport` — step 2; the behavioral
-   core, reviewed against the broker adapter's contract.
+   core, reviewed against the broker adapter's contract. Includes the shared
+   connection-scaffolding extraction and the Claude refactor onto it; if that
+   refactor grows large, split it out as a preceding
+   `refactor(sdk): extract shared connection scaffolding` PR (2a) so the
+   Claude-only diff is reviewable in isolation.
 3. `docs(sdk): codex examples, compatibility matrix, and module docs` — step 3;
    needs a devbox image with the codex CLI and an OpenAI credential to run the
    compat matrix.
