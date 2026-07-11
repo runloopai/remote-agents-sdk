@@ -54,7 +54,8 @@ field). Everything the SDK needs to know:
 Protocol source of truth: JSON Schemas in the Codex CLI repo
 (`openai/codex`, `codex-rs/app-server-protocol/schema/json`). The broker's
 vendored `codex-codes` crate is pinned to v0.143.1 (tested against Codex CLI
-0.143.0) — keep the SDK's types in the same version band.
+0.143.0), but the adapter is a forward-tolerant verbatim proxy — the SDK pins
+to **0.144.x** (current npm `@openai/codex`).
 
 ## Design decisions
 
@@ -68,8 +69,7 @@ vendored `codex-codes` crate is pinned to v0.143.1 (tested against Codex CLI
   own generator: `codex app-server generate-ts`. Vendor its output under
   `sdk/src/codex/protocol/generated/` with a codegen script
   (`scripts/generate-codex-protocol.ts`, `@openai/codex` as a devDependency
-  pinned to the broker's version band) and a provenance header (CLI version +
-  date). This mirrors the broker vendoring `codex-codes`. Hand-written code
+  pinned to 0.144.x) and a provenance header (CLI version + date). This mirrors the broker vendoring `codex-codes`. Hand-written code
   imports from a thin `protocol/index.ts` that re-exports the generated types
   plus method-name constants.
 - **Claude-style API, codex-native sessions**: Codex has real server-side
@@ -197,10 +197,12 @@ usage with this connection. Its provider layer needs, concretely:
 
 ## Open items
 
-- **Version pinning**: broker vendored 0.143.x; npm `@openai/codex` latest is
-  0.144.x. Confirm the app-server schema is compatible across that band (the
-  broker adapter is forward-tolerant by design; the SDK generator should pin
-  to the broker's band until proven otherwise).
+- **Version pinning**: the SDK generator and devbox blueprints pin `@openai/codex`
+  to 0.144.x even though the broker's vendored crate sits at 0.143.1 — the
+  broker adapter is forward-tolerant by design (verbatim proxy, only `turn/*`
+  lifecycle inspected). Bump the broker's `codex-codes` fork to 0.144.x when
+  convenient; a schema break in the `turn/*` lifecycle types is the only thing
+  that would force lockstep.
 - **Approval defaults**: auto-approve in the SDK (matching ACP module
   behavior) vs. full-auto via launch args (`approval_policy=never`) as the
   documented default for headless use. Lean: SDK default auto-approve +
