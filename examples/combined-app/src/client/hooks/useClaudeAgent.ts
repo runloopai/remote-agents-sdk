@@ -157,7 +157,9 @@ export function useClaudeAgent(agentId: string | null): UseClaudeAgentReturn {
       dispatch({ type: "APPEND_MESSAGE", message: msg });
     }
     activeBlockIndexRef.current.clear();
-    dispatch({ type: "SET", patch: { isAgentTurn: false, isStreaming: false } });
+    // A completed turn can no longer be answered, so drop any prompt (e.g. an
+    // AskUserQuestion elicitation) that is still pending.
+    dispatch({ type: "SET", patch: { isAgentTurn: false, isStreaming: false, pendingControlRequest: null } });
   }
 
   function handleSDKMessage(msg: Record<string, unknown>): void {
@@ -600,7 +602,7 @@ export function useClaudeAgent(agentId: string | null): UseClaudeAgentReturn {
     }
 
     if (isTurnCompletedEvent(tlEvent)) {
-      dispatch({ type: "SET", patch: { isAgentTurn: false, isStreaming: false } });
+      dispatch({ type: "SET", patch: { isAgentTurn: false, isStreaming: false, pendingControlRequest: null } });
       return;
     }
 

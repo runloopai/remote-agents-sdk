@@ -466,7 +466,9 @@ export function useACPAgent(agentId: string | null): UseACPAgentReturn {
       return;
     }
     if (isTurnCompletedEvent(tlEvent)) {
-      dispatch({ type: "SET", patch: { isAgentTurn: false, isStreaming: false } });
+      // A completed turn can no longer be answered, so drop any prompt (an
+      // elicitation question or permission request) that is still pending.
+      dispatch({ type: "SET", patch: { isAgentTurn: false, isStreaming: false, pendingElicitation: null, pendingPermission: null } });
       lastStopReasonRef.current = tlEvent.data.stopReason;
       return;
     }
@@ -565,7 +567,7 @@ export function useACPAgent(agentId: string | null): UseACPAgentReturn {
 
       if (data.type === "turn_error") {
         flushBlocksToMessages();
-        dispatch({ type: "SET", patch: { isAgentTurn: false, isStreaming: false, error: data.error ?? "Turn failed" } });
+        dispatch({ type: "SET", patch: { isAgentTurn: false, isStreaming: false, pendingElicitation: null, pendingPermission: null, error: data.error ?? "Turn failed" } });
         return;
       }
 
