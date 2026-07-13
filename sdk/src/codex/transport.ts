@@ -58,6 +58,7 @@ export class CodexAxonTransport implements CodexTransport {
         if (typeof frame.id === "string" && frame.id.startsWith(RESERVED_REQUEST_ID_PREFIX))
           throw new Error(`Request IDs beginning with ${RESERVED_REQUEST_ID_PREFIX} are reserved`);
       },
+      systemErrorsDuringReplay: false,
     });
   }
   async connect(): Promise<void> {

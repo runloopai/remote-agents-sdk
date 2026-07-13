@@ -4,6 +4,7 @@ import {
   createMockAxon,
   makeAgentEvent,
   makeSystemEventWithRawPayload,
+  makeUserEvent,
 } from "../__test-utils__/mock-axon.js";
 import type { ConnectionStateError } from "../shared/errors/connection-state-error.js";
 import { SystemError } from "../shared/errors/system-error.js";
@@ -48,6 +49,7 @@ describe("CodexAxonConnection", () => {
     await conn.send("hello");
     await conn.interrupt();
     const frames = mock.axon.publish.mock.calls.map(([event]) => JSON.parse(event.payload));
+    expect(frames.map((frame) => frame.method)).not.toContain("initialize");
     expect(frames[1]).toMatchObject({
       method: "turn/start",
       params: {
@@ -76,6 +78,41 @@ describe("CodexAxonConnection", () => {
     await conn.connect();
     await tick();
     expect(conn.threadId).toBe("replayed");
+  });
+
+  it("ignores historical broker errors while replaying a recovered channel", async () => {
+    const ctrl = createControllableStream(true);
+    ctrl.push(makeSystemEventWithRawPayload("broker.error", "historical crash", 1));
+    ctrl.push(
+      makeAgentEvent(
+        "thread/started",
+        { method: "thread/started", params: { thread: { id: "recovered" } } },
+        2,
+      ),
+    );
+    const mock = createMockAxon(ctrl);
+    Object.assign(mock.axon, {
+      client: { get: vi.fn().mockResolvedValue({ events: [], has_more: false, total_count: 2 }) },
+    });
+    const onError = vi.fn();
+    const conn = new CodexAxonConnection(mock.axon as never, { id: "dbx" } as never, { onError });
+    await conn.connect();
+    await tick();
+    expect(conn.threadId).toBe("recovered");
+    expect(onError).not.toHaveBeenCalledWith(expect.any(SystemError));
+  });
+
+  it("does not capture a user-origin thread/started event", async () => {
+    const { ctrl, conn } = setup();
+    await conn.connect();
+    ctrl.push(
+      makeUserEvent("thread/started", {
+        method: "thread/started",
+        params: { thread: { id: "spoofed" } },
+      }),
+    );
+    await tick();
+    expect(conn.threadId).toBeUndefined();
   });
 
   it("correlates responses by JSON-RPC id", async () => {

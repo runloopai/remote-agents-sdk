@@ -7,6 +7,7 @@ import { ConnectionStateError } from "../shared/errors/connection-state-error.js
 import { runDisconnectHook } from "../shared/lifecycle.js";
 import { ListenerSet } from "../shared/listener-set.js";
 import { makeDefaultOnError, makeLogger } from "../shared/logging.js";
+import { isFromAgent } from "../shared/origin-guards.js";
 import { PendingRequestMap } from "../shared/pending-request-map.js";
 import { timelineEventGenerator } from "../shared/timeline-generator.js";
 import type {
@@ -131,7 +132,7 @@ export class CodexAxonConnection {
       onAxonEvent: (event) => {
         this.axonListeners.emit(event);
         this.timelineListeners.emit(classifyCodexAxonEvent(event));
-        if (event.event_type === "thread/started" && event.payload != null) {
+        if (isFromAgent(event) && event.event_type === "thread/started" && event.payload != null) {
           try {
             this.captureThreadStarted(JSON.parse(event.payload) as CodexFrame);
           } catch {
