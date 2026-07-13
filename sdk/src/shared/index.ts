@@ -11,6 +11,11 @@
  */
 
 export { AsyncMessageQueue } from "./async-message-queue.js";
+export {
+  AxonFrameTransport,
+  type AxonFrameTransportOptions,
+  type FrameRequestId,
+} from "./axon-frame-transport.js";
 export { resolveReplayTarget } from "./connect-guards.js";
 export {
   ConnectionStateError,
