@@ -5,7 +5,7 @@ import { isSystemError, SystemError } from "../shared/errors/system-error.js";
 import { makeLogger } from "../shared/logging.js";
 import { isFromAgent, isFromUser } from "../shared/origin-guards.js";
 import type { LogFn } from "../shared/types.js";
-import { CODEX_APPROVAL_REQUEST_METHOD_SET, RESPONSE_EVENT_TYPE } from "./protocol/index.js";
+import { RESERVED_REQUEST_ID_PREFIX, RESPONSE_EVENT_TYPE } from "./protocol/index.js";
 
 export type CodexFrame = {
   id?: string | number;
@@ -32,6 +32,10 @@ export interface CodexTransport {
   isReady(): boolean;
 }
 
+/**
+ * Whole-frame JSON-RPC transport over Axon publish/SSE.
+ * @category Transport
+ */
 export class CodexAxonTransport implements CodexTransport {
   private stream: Stream<AxonEventView> | null = null;
   private connected = false;
@@ -64,6 +68,8 @@ export class CodexAxonTransport implements CodexTransport {
       throw new Error("Transport is not ready. Call connect() first or check isReady().");
     const raw = typeof frame === "string" ? frame : JSON.stringify(frame);
     const parsed = typeof frame === "string" ? (JSON.parse(frame) as CodexFrame) : frame;
+    if (typeof parsed.id === "string" && parsed.id.startsWith(RESERVED_REQUEST_ID_PREFIX))
+      throw new Error(`Request IDs beginning with ${RESERVED_REQUEST_ID_PREFIX} are reserved`);
     await this.axon.publish({
       event_type: parsed.method ?? RESPONSE_EVENT_TYPE,
       origin: "USER_EVENT",
@@ -83,16 +89,11 @@ export class CodexAxonTransport implements CodexTransport {
       if (this.closed) break;
       this.lastSequence = event.sequence;
       this.options.onAxonEvent?.(event);
+      if (isSystemError(event)) throw SystemError.fromEvent(event);
       if (target != null && event.sequence <= target) {
         try {
           const frame = JSON.parse(event.payload ?? "null") as CodexFrame;
-          if (
-            isFromAgent(event) &&
-            frame.method &&
-            CODEX_APPROVAL_REQUEST_METHOD_SET.has(frame.method) &&
-            frame.id != null
-          )
-            buffered.set(frame.id, frame);
+          if (isFromAgent(event) && frame.method && frame.id != null) buffered.set(frame.id, frame);
           if (isFromUser(event) && event.event_type === RESPONSE_EVENT_TYPE && frame.id != null)
             buffered.delete(frame.id);
         } catch {
@@ -102,7 +103,6 @@ export class CodexAxonTransport implements CodexTransport {
         continue;
       }
       if (target != null && buffered.size) yield* flush();
-      if (isSystemError(event)) throw SystemError.fromEvent(event);
       if (!isFromAgent(event) || event.payload == null) continue;
       try {
         const frame: unknown = JSON.parse(event.payload);

@@ -1,6 +1,12 @@
 {
   "$schema": "https://typedoc.org/schema.json",
-  "entryPoints": ["src/index.ts", "src/acp/index.ts", "src/claude/index.ts", "src/shared/index.ts"],
+  "entryPoints": [
+    "src/index.ts",
+    "src/acp/index.ts",
+    "src/claude/index.ts",
+    "src/codex/index.ts",
+    "src/shared/index.ts"
+  ],
   "plugin": ["./typedoc-default-category-plugin.mjs"],
   "out": "docs",
   "name": "@runloop/remote-agents-sdk",
@@ -17,6 +23,7 @@
     "Types",
     "ACP Protocol",
     "Claude SDK",
+    "Codex Protocol",
     "Other",
     "*"
   ],

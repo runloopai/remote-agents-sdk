@@ -11,12 +11,14 @@ import type {
   PublishResultView,
 } from "@runloop/api-client/resources/axons";
 import type { Axon, Devbox } from "@runloop/api-client/sdk";
+import { AsyncMessageQueue } from "../shared/async-message-queue.js";
 import { resolveReplayTarget } from "../shared/connect-guards.js";
 import { ConnectionStateError } from "../shared/errors/connection-state-error.js";
 import { SystemError } from "../shared/errors/system-error.js";
 import { runDisconnectHook } from "../shared/lifecycle.js";
 import { ListenerSet } from "../shared/listener-set.js";
 import { makeDefaultOnError, makeLogger } from "../shared/logging.js";
+import { PendingRequestMap } from "../shared/pending-request-map.js";
 import { timelineEventGenerator } from "../shared/timeline-generator.js";
 import type {
   AxonEventListener,
@@ -95,13 +97,6 @@ function nextRequestId(counter: number): string {
  * Tracks a single in-flight control request so its promise can be
  * resolved or rejected when the matching response arrives.
  */
-interface PendingControlRequest {
-  /** Settles the promise with the response payload on success. */
-  resolve: (value: WireData) => void;
-  /** Rejects the promise on error or timeout. */
-  reject: (reason: Error) => void;
-}
-
 // ---------------------------------------------------------------------------
 // Client options
 // ---------------------------------------------------------------------------
@@ -205,14 +200,7 @@ export class ClaudeAxonConnection {
   /** Optional teardown callback invoked by {@link disconnect}. */
   private disconnectFn: (() => void | Promise<void>) | undefined;
 
-  private static readonly MESSAGE_QUEUE_HIGH_WATER_MARK = 1000;
-
-  /** Buffer of SDK messages that arrived before a consumer called {@link nextMessage}. */
-  private messageQueue: SDKMessage[] = [];
-  private messageQueueWarned = false;
-
-  /** Promise resolvers waiting for the next SDK message. */
-  private messageWaiters: Array<(msg: SDKMessage | null) => void> = [];
+  private messageQueue: AsyncMessageQueue<SDKMessage>;
 
   /** Whether the background read loop has been started. */
   private readLoopRunning = false;
@@ -221,13 +209,12 @@ export class ClaudeAxonConnection {
   private handshakeComplete = false;
 
   /** Whether the background read loop has finished (stream ended or errored). */
-  private readLoopDone = false;
 
   /** Monotonically increasing counter used to generate unique control request IDs. */
   private requestCounter = 0;
 
   /** In-flight control requests awaiting a response from the CLI. */
-  private pendingControlRequests = new Map<string, PendingControlRequest>();
+  private pendingControlRequests = new PendingRequestMap<string, WireData>();
 
   /**
    * When true, inbound routing and the read loop should stop. Cleared after a
@@ -287,6 +274,12 @@ export class ClaudeAxonConnection {
     this.timelineEventListeners = new ListenerSet<TimelineEventListener<ClaudeTimelineEvent>>(
       this.handleError,
     );
+    this.messageQueue = new AsyncMessageQueue(1000, (size) =>
+      this.handleError(
+        `[ClaudeAxonConnection] Message queue has ${size} buffered messages. ` +
+          "Ensure you are consuming messages via receiveMessages() or receiveResponse().",
+      ),
+    );
   }
 
   // -----------------------------------------------------------------------
@@ -322,7 +315,7 @@ export class ClaudeAxonConnection {
     }
 
     this.suppressTransportAutoReconnect = false;
-    this.readLoopDone = false;
+    this.messageQueue.reopen();
 
     const replayTargetSequence = await resolveReplayTarget(this.axon, this.options, this.log);
 
@@ -433,19 +426,12 @@ export class ClaudeAxonConnection {
     this.timelineAbortController.abort();
 
     // Unblock any waiters and clear buffered messages
-    for (const waiter of this.messageWaiters) {
-      waiter(null);
-    }
-    this.messageWaiters.length = 0;
-    this.messageQueue.length = 0;
+    this.messageQueue.close();
 
     this.handshakeComplete = false;
 
     // Fail pending control requests
-    for (const [, pending] of this.pendingControlRequests) {
-      pending.reject(new Error("Client disconnected"));
-    }
-    this.pendingControlRequests.clear();
+    this.pendingControlRequests.rejectAll(new Error("Client disconnected"));
 
     if (this.transport) {
       await this.transport.close();
@@ -456,7 +442,6 @@ export class ClaudeAxonConnection {
 
     this.timelineAbortController = new AbortController();
     this.closed = false;
-    this.readLoopDone = false;
   }
 
   // -----------------------------------------------------------------------
@@ -552,10 +537,9 @@ export class ClaudeAxonConnection {
             this.fatal = true;
             this.closed = true;
           }
-          for (const [, pending] of this.pendingControlRequests) {
-            pending.reject(err instanceof Error ? err : new Error(String(err)));
-          }
-          this.pendingControlRequests.clear();
+          this.pendingControlRequests.rejectAll(
+            err instanceof Error ? err : new Error(String(err)),
+          );
           return "error";
         }
       };
@@ -580,14 +564,10 @@ export class ClaudeAxonConnection {
         }
       }
 
-      this.readLoopDone = true;
       this.readLoopRunning = false;
       this.streamAborted = false;
       this.timelineAbortController.abort();
-      for (const waiter of this.messageWaiters) {
-        waiter(null);
-      }
-      this.messageWaiters.length = 0;
+      this.messageQueue.close(false);
     })();
   }
 
@@ -617,14 +597,14 @@ export class ClaudeAxonConnection {
     if (msgType === "control_response") {
       const response = message.response ?? {};
       const requestId: string | undefined = response.request_id;
-      if (requestId && this.pendingControlRequests.has(requestId)) {
-        // biome-ignore lint/style/noNonNullAssertion: guarded by .has() check above
-        const pending = this.pendingControlRequests.get(requestId)!;
-        this.pendingControlRequests.delete(requestId);
+      if (requestId) {
         if (response.subtype === "error") {
-          pending.reject(new Error(response.error ?? "Unknown control error"));
+          this.pendingControlRequests.reject(
+            requestId,
+            new Error(response.error ?? "Unknown control error"),
+          );
         } else {
-          pending.resolve(response.response ?? {});
+          this.pendingControlRequests.resolve(requestId, response.response ?? {});
         }
       }
       return;
@@ -658,23 +638,7 @@ export class ClaudeAxonConnection {
       return;
     }
     const sdkMessage = message as SDKMessage;
-    if (this.messageWaiters.length > 0) {
-      // biome-ignore lint/style/noNonNullAssertion: guarded by .length > 0 check above
-      const waiter = this.messageWaiters.shift()!;
-      waiter(sdkMessage);
-    } else {
-      this.messageQueue.push(sdkMessage);
-      if (
-        !this.messageQueueWarned &&
-        this.messageQueue.length >= ClaudeAxonConnection.MESSAGE_QUEUE_HIGH_WATER_MARK
-      ) {
-        this.messageQueueWarned = true;
-        this.handleError(
-          `[ClaudeAxonConnection] Message queue has ${this.messageQueue.length} buffered messages. ` +
-            "Ensure you are consuming messages via receiveMessages() or receiveResponse().",
-        );
-      }
-    }
+    this.messageQueue.push(sdkMessage);
   }
 
   /**
@@ -685,16 +649,10 @@ export class ClaudeAxonConnection {
    * @returns The next SDK message, or `null` if no more messages will arrive.
    */
   private nextMessage(): Promise<SDKMessage | null> {
-    if (this.messageQueue.length > 0) {
-      // biome-ignore lint/style/noNonNullAssertion: guarded by .length > 0 check above
-      return Promise.resolve(this.messageQueue.shift()!);
-    }
-    if (this.readLoopDone || this.closed) {
+    if (this.closed) {
       return Promise.resolve(null);
     }
-    return new Promise<SDKMessage | null>((resolve) => {
-      this.messageWaiters.push(resolve);
-    });
+    return this.messageQueue.next();
   }
 
   // -----------------------------------------------------------------------
@@ -723,31 +681,22 @@ export class ClaudeAxonConnection {
       request,
     };
 
-    const promise = new Promise<WireData>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        if (this.pendingControlRequests.has(requestId)) {
-          this.pendingControlRequests.delete(requestId);
-          reject(new Error(`Control request timeout: ${request.subtype}`));
-        }
-      }, timeoutMs);
-
-      this.pendingControlRequests.set(requestId, {
-        resolve: (value) => {
-          clearTimeout(timer);
-          resolve(value);
-        },
-        reject: (reason) => {
-          clearTimeout(timer);
-          reject(reason);
-        },
-      });
-    });
+    const promise = this.pendingControlRequests.create(
+      requestId,
+      timeoutMs,
+      `Control request timeout: ${request.subtype}`,
+    );
 
     const transport = this.transport;
     if (!transport) {
       throw new ConnectionStateError("not_connected", "Not connected. Call connect() first.");
     }
-    await transport.write(JSON.stringify(controlRequest));
+    try {
+      await transport.write(JSON.stringify(controlRequest));
+    } catch (error) {
+      this.pendingControlRequests.delete(requestId);
+      throw error;
+    }
     return promise;
   }
 

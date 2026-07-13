@@ -10,6 +10,7 @@
  * @module
  */
 
+export { AsyncMessageQueue } from "./async-message-queue.js";
 export { resolveReplayTarget } from "./connect-guards.js";
 export {
   ConnectionStateError,
@@ -27,6 +28,7 @@ export {
   isFromUser,
   type UserOriginEvent,
 } from "./origin-guards.js";
+export { PendingRequestMap } from "./pending-request-map.js";
 export { getLastSequence } from "./replay.js";
 export {
   getJsonRpcId,
