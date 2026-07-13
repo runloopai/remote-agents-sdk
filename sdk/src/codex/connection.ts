@@ -2,8 +2,8 @@ import type { AxonPublishParams, PublishResultView } from "@runloop/api-client/r
 import type { Axon, Devbox } from "@runloop/api-client/sdk";
 import { AsyncMessageQueue } from "../shared/async-message-queue.js";
 import { resolveReplayTarget } from "../shared/connect-guards.js";
+import { runConnectionReadLoop } from "../shared/connection-read-loop.js";
 import { ConnectionStateError } from "../shared/errors/connection-state-error.js";
-import { SystemError } from "../shared/errors/system-error.js";
 import { runDisconnectHook } from "../shared/lifecycle.js";
 import { ListenerSet } from "../shared/listener-set.js";
 import { makeDefaultOnError, makeLogger } from "../shared/logging.js";
@@ -180,51 +180,31 @@ export class CodexAxonConnection {
     );
   }
   private readLoop(): void {
-    void (async () => {
-      const transport = this.transport;
-      if (!transport) return;
-      const consume = async (): Promise<"ended" | "error" | "fatal"> => {
-        try {
-          for await (const frame of transport.readMessages()) {
-            if (this.closed) return "ended";
-            this.route(frame);
-          }
-          return "ended";
-        } catch (error) {
-          this.handleError(error);
-          if (error instanceof SystemError) {
-            this.fatal = true;
-            this.closed = true;
-            await transport.close().catch(() => undefined);
-            this.pending.rejectAll(error);
-            return "fatal";
-          }
-          return "error";
-        }
-      };
-      let outcome = await consume();
-      if (
-        outcome !== "fatal" &&
-        !this.closed &&
-        !this.aborted &&
-        !this.suppressAutoReconnect &&
-        transport === this.transport
-      ) {
-        try {
-          await transport.reconnect();
-          outcome = await consume();
-        } catch (error) {
-          this.handleError(error);
-          outcome = "error";
-        }
-      }
-      if (outcome === "error") this.pending.rejectAll(new Error("Codex event stream failed"));
-      if (transport !== this.transport || this.suppressAutoReconnect) return;
-      this.running = false;
-      this.abortController.abort();
-      this.messageQueue.close(false);
-    })();
+    const transport = this.transport;
+    if (!transport) return;
+    void runConnectionReadLoop({
+      transport,
+      route: (frame) => this.route(frame),
+      isClosed: () => this.closed,
+      isReconnectSuppressed: () => this.suppressAutoReconnect,
+      isStreamAborted: () => this.aborted,
+      isCurrent: () => transport === this.transport,
+      onError: this.handleError,
+      onFatal: (error) => {
+        this.fatal = true;
+        this.closed = true;
+        this.pending.rejectAll(error);
+      },
+      onTerminalError: (error) => this.pending.rejectAll(error),
+      onFinished: () => {
+        this.running = false;
+        this.abortController.abort();
+        this.messageQueue.close(false);
+      },
+      log: this.log,
+    });
   }
+
   private captureThreadStarted(frame: CodexFrame): void {
     if (frame.method !== "thread/started") return;
     const id = (frame.params as { thread?: { id?: unknown } } | undefined)?.thread?.id;

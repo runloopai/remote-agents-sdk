@@ -13,6 +13,7 @@ import type {
 import type { Axon, Devbox } from "@runloop/api-client/sdk";
 import { AsyncMessageQueue } from "../shared/async-message-queue.js";
 import { resolveReplayTarget } from "../shared/connect-guards.js";
+import { runConnectionReadLoop } from "../shared/connection-read-loop.js";
 import { ConnectionStateError } from "../shared/errors/connection-state-error.js";
 import { SystemError } from "../shared/errors/system-error.js";
 import { runDisconnectHook } from "../shared/lifecycle.js";
@@ -513,62 +514,33 @@ export class ClaudeAxonConnection {
   private startReadLoop(): void {
     if (this.readLoopRunning) return;
     this.readLoopRunning = true;
-
-    (async () => {
-      const transport = this.transport;
-      if (!transport) {
-        this.readLoopRunning = false;
-        return;
-      }
-
-      let reconnected = false;
-
-      const consumeStream = async (): Promise<"ended" | "error"> => {
-        try {
-          for await (const message of transport.readMessages()) {
-            if (this.closed) return "ended";
-            this.routeMessage(message);
-          }
-          return "ended";
-        } catch (err) {
-          this.log("readLoop", `error: ${err}`);
-          this.handleError(err);
-          if (err instanceof SystemError) {
-            this.fatal = true;
-            this.closed = true;
-          }
-          this.pendingControlRequests.rejectAll(
-            err instanceof Error ? err : new Error(String(err)),
-          );
-          return "error";
-        }
-      };
-
-      const outcome = await consumeStream();
-
-      if (
-        !this.closed &&
-        !this.suppressTransportAutoReconnect &&
-        !this.streamAborted &&
-        !reconnected
-      ) {
-        const label = outcome === "error" ? "error" : "ended unexpectedly";
-        this.log("readLoop", `SSE stream ${label}, reconnecting...`);
-        reconnected = true;
-        try {
-          await transport.reconnect();
-          this.log("readLoop", "reconnected successfully");
-          await consumeStream();
-        } catch (reconnectErr) {
-          this.log("readLoop", `reconnect failed: ${reconnectErr}`);
-        }
-      }
-
+    const transport = this.transport;
+    if (!transport) {
       this.readLoopRunning = false;
-      this.streamAborted = false;
-      this.timelineAbortController.abort();
-      this.messageQueue.close(false);
-    })();
+      return;
+    }
+    void runConnectionReadLoop({
+      transport,
+      route: (message) => this.routeMessage(message),
+      isClosed: () => this.closed,
+      isReconnectSuppressed: () => this.suppressTransportAutoReconnect,
+      isStreamAborted: () => this.streamAborted,
+      isCurrent: () => transport === this.transport,
+      onError: this.handleError,
+      onFatal: (error) => {
+        this.fatal = true;
+        this.closed = true;
+        this.pendingControlRequests.rejectAll(error);
+      },
+      onTerminalError: (error) => this.pendingControlRequests.rejectAll(error),
+      onFinished: () => {
+        this.readLoopRunning = false;
+        this.streamAborted = false;
+        this.timelineAbortController.abort();
+        this.messageQueue.close(false);
+      },
+      log: this.log,
+    });
   }
 
   /**

@@ -18,6 +18,11 @@ export {
 } from "./axon-frame-transport.js";
 export { resolveReplayTarget } from "./connect-guards.js";
 export {
+  type ConnectionReadLoopOptions,
+  type ReconnectableMessageTransport,
+  runConnectionReadLoop,
+} from "./connection-read-loop.js";
+export {
   ConnectionStateError,
   type ConnectionStateErrorCode,
   isConnectionStateError,
