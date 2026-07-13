@@ -6,11 +6,11 @@ SDK Version: 0.4.3
 
 | Use Case | ACP | Claude | Codex |
 |----------|-----|--------|-------|
-| agent-via-blueprint | pass | pass | N/A |
+| agent-via-blueprint | pass | pass | pending |
 | approval-codex | N/A | N/A | pending |
 | elicitation-acp | xfail | N/A | N/A |
 | elicitation-claude | N/A | pass | N/A |
-| single-prompt | pass | pass | N/A |
+| single-prompt | pass | pass | pending |
 | thread-resume-codex | N/A | N/A | pending |
 
 ## ACP Agent × Feature

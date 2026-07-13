@@ -1,5 +1,6 @@
 import { isAgentTextChunk } from "@runloop/remote-agents-sdk/acp";
 import { isClaudeAssistantTextEvent, isClaudeResultEvent } from "@runloop/remote-agents-sdk/claude";
+import { isCodexItemCompletedEvent } from "@runloop/remote-agents-sdk/codex";
 import type { UseCase } from "../types.js";
 import { waitFor } from "../validator.js";
 
@@ -12,7 +13,7 @@ const ACP_CHUNK_WAIT_MS = 5_000;
 export default {
   name: "single-prompt",
   description: "Send one prompt, receive text response",
-  protocols: ["acp", "claude"],
+  protocols: ["acp", "claude", "codex"],
   timeoutMs: 30_000,
 
   async run(ctx) {
@@ -69,6 +70,29 @@ export default {
 
       if (resultError) throw new Error(resultError);
       if (!hasAssistantText) throw new Error("Assistant did not respond with any text");
+
+      ctx.log("Pass: Agent responded with text");
+    } else if (ctx.codex) {
+      ctx.log("Running Codex path...");
+
+      let responseText = "";
+      const unsub = ctx.codex.onTimelineEvent((event) => {
+        if (isCodexItemCompletedEvent(event) && event.data.params.item.type === "agentMessage") {
+          responseText += event.data.params.item.text;
+        }
+      });
+
+      ctx.log(`Sending prompt: "${PROMPT}"`);
+      await ctx.codex.send(PROMPT);
+
+      for await (const frame of ctx.codex.receiveTurn()) {
+        if (frame.method === "error") {
+          throw new Error(`Turn error: ${JSON.stringify(frame.params)}`);
+        }
+      }
+      unsub();
+
+      if (!responseText.trim()) throw new Error("Agent did not respond with any text");
 
       ctx.log("Pass: Agent responded with text");
     } else {

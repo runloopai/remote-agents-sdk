@@ -17,11 +17,11 @@ Refer to ../scaffold.ts for setup and advice on best practices.
 
 ## Use Cases
 
-- [agent-via-blueprint](https://github.com/runloopai/remote-agents-sdk/blob/main/examples/feature-examples/src/use-cases/agent-via-blueprint.ts) — Use pre-built blueprint with agents baked in (acp + claude)
+- [agent-via-blueprint](https://github.com/runloopai/remote-agents-sdk/blob/main/examples/feature-examples/src/use-cases/agent-via-blueprint.ts) — Use pre-built blueprint with agents baked in (acp + claude + codex)
 - [approval-codex](https://github.com/runloopai/remote-agents-sdk/blob/main/examples/feature-examples/src/use-cases/approval-codex.ts) — Handle a server-initiated command approval round-trip via onApprovalRequest (codex)
 - [elicitation-acp](https://github.com/runloopai/remote-agents-sdk/blob/main/examples/feature-examples/src/use-cases/elicitation-acp.ts) — Handle agent-initiated user input via ACP session_elicitation (acp)
 - [elicitation-claude](https://github.com/runloopai/remote-agents-sdk/blob/main/examples/feature-examples/src/use-cases/elicitation-claude.ts) — Handle agent-initiated user input via Claude conversational flow (claude)
-- [single-prompt](https://github.com/runloopai/remote-agents-sdk/blob/main/examples/feature-examples/src/use-cases/single-prompt.ts) — Send one prompt, receive text response (acp + claude)
+- [single-prompt](https://github.com/runloopai/remote-agents-sdk/blob/main/examples/feature-examples/src/use-cases/single-prompt.ts) — Send one prompt, receive text response (acp + claude + codex)
 - [thread-resume-codex](https://github.com/runloopai/remote-agents-sdk/blob/main/examples/feature-examples/src/use-cases/thread-resume-codex.ts) — Resume a server-side thread by id and verify context is preserved (codex)
 
 ## Compatibility
