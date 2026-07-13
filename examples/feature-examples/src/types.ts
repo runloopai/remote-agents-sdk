@@ -1,5 +1,6 @@
 import type { ACPAxonConnection } from "@runloop/remote-agents-sdk/acp";
 import type { ClaudeAxonConnection } from "@runloop/remote-agents-sdk/claude";
+import type { CodexAxonConnection } from "@runloop/remote-agents-sdk/codex";
 import type { Client, Agent } from "@agentclientprotocol/sdk";
 
 /**
@@ -19,8 +20,8 @@ export type InstallStrategy =
  * Maps directly to the Runloop `broker_mount` API shape.
  */
 export interface BrokerMount {
-  /** Broker protocol: "acp" for ACP agents, "claude_json" for Claude Code. */
-  protocol: "acp" | "claude_json";
+  /** Broker protocol: "acp" for ACP agents, "claude_json" for Claude Code, "codex" for native Codex. */
+  protocol: "acp" | "claude_json" | "codex";
   /** Path or name of the agent binary. */
   agentBinary?: string;
   /** CLI args passed to the agent binary. */
@@ -37,7 +38,7 @@ export interface AgentConfig {
   name: string;
 
   /** Which protocol this agent uses (client-side). */
-  protocol: "acp" | "claude";
+  protocol: "acp" | "claude" | "codex";
 
   /** How to install the agent on the devbox. */
   install: InstallStrategy;
@@ -95,7 +96,7 @@ export interface UseCase {
   description: string;
 
   /** Which protocols this use case applies to. */
-  protocols: Array<"acp" | "claude">;
+  protocols: Array<"acp" | "claude" | "codex">;
 
   /** Per-use-case timeout in ms. Overrides the default. */
   timeoutMs?: number;
@@ -147,10 +148,13 @@ export interface RunContext {
   /** ACP connection, or null if this is a Claude run. */
   acp: ACPAxonConnection | null;
 
-  /** Claude connection, or null if this is an ACP run. */
+  /** Claude connection, or null if this is an ACP or Codex run. */
   claude: ClaudeAxonConnection | null;
 
-  /** ACP session ID, or null for Claude (implicit session). */
+  /** Codex connection, or null if this is an ACP or Claude run. */
+  codex: CodexAxonConnection | null;
+
+  /** ACP session ID, or null for Claude/Codex (implicit session). */
   sessionId: string | null;
 
   /** Log a message (appears in run output). */
@@ -177,7 +181,7 @@ export interface RunResult {
   useCase: string;
 
   /** Protocol used (e.g., "acp"). */
-  protocol: "acp" | "claude";
+  protocol: "acp" | "claude" | "codex";
 
   /** Outcome. */
   status: "pass" | "fail" | "skip" | "xfail" | "xpass";

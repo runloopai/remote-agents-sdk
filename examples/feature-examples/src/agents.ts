@@ -39,6 +39,21 @@ export const AGENTS: AgentConfig[] = [
     acpAuthMethodId: "openai-api-key",
   },
   {
+    name: "codex",
+    protocol: "codex",
+    install: {
+      kind: "agent-mount",
+      agentName: "codex",
+      blueprint: "runloop/starter-x86_64",
+    },
+    brokerMount: {
+      protocol: "codex",
+      agentBinary: "codex",
+      workingDirectory: "/home/user",
+    },
+    secrets: { OPENAI_API_KEY: "OPENAI_API_KEY" },
+  },
+  {
     name: "qwen",
     protocol: "acp",
     install: {
