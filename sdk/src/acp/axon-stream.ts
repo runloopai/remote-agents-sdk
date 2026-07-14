@@ -21,6 +21,9 @@ const NOTIFICATION_TYPES = new Set<string>([
   CLIENT_METHODS.session_elicitation_complete,
 ]);
 
+/** Default `source` used when publishing events from the ACP SDK stream. */
+const DEFAULT_SOURCE = "acp-sdk-client";
+
 /**
  * Creates an ACP-compatible `Stream` backed by an Axon channel from
  * `@runloop/api-client`.
@@ -42,6 +45,13 @@ const NOTIFICATION_TYPES = new Set<string>([
 export function axonStream(options: AxonStreamOptions): Stream {
   const { axon, signal, onAxonEvent, log, afterSequence, replayTargetSequence } = options;
   const onError = options.onError ?? makeDefaultOnError("axonStream");
+  const optionSource = options.source;
+  // Resolve lazily on each publish so callers can change the source between
+  // messages (e.g. via a resolver closing over mutable state).
+  const resolveSource = (): string => {
+    const value = typeof optionSource === "function" ? optionSource() : optionSource;
+    return value ?? DEFAULT_SOURCE;
+  };
 
   // Maps outbound JSON-RPC request method -> id so we can correlate
   // the broker's response (which only carries event_type, not an id).
@@ -66,7 +76,14 @@ export function axonStream(options: AxonStreamOptions): Stream {
     replayTargetSequence,
   );
 
-  const writable = createWritable(axon, pendingRequests, pendingClientRequests, onError, log);
+  const writable = createWritable(
+    axon,
+    pendingRequests,
+    pendingClientRequests,
+    onError,
+    log,
+    resolveSource,
+  );
 
   return { readable, writable };
 }
@@ -447,6 +464,7 @@ function axonEventToJsonRpc(
  * @param axon                 - Axon channel to publish to.
  * @param pendingRequests      - Shared map tracking outbound request method → JSON-RPC ID.
  * @param pendingClientRequests - Shared map tracking agent-to-client request ID → method.
+ * @param resolveSource         - Resolver invoked per publish to obtain the `source`.
  * @returns A `WritableStream` that accepts JSON-RPC messages.
  */
 function createWritable(
@@ -455,6 +473,7 @@ function createWritable(
   pendingClientRequests: Map<string | number, string>,
   onError: (error: unknown) => void,
   log: LogFn | undefined,
+  resolveSource: () => string,
 ): WritableStream<AnyMessage> {
   return new WritableStream<AnyMessage>({
     async write(message) {
@@ -465,7 +484,7 @@ function createWritable(
           event_type: eventType,
           origin: "USER_EVENT",
           payload,
-          source: "acp-sdk-client",
+          source: resolveSource(),
         });
       } catch (err) {
         onError(err);
