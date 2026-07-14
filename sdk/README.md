@@ -192,7 +192,14 @@ import { RunloopSDK } from "@runloop/api-client";
 const sdk = new RunloopSDK({ bearerToken: process.env.RUNLOOP_API_KEY });
 
 // Create an Axon channel and a devbox with a Codex broker mount.
-// The broker spawns `codex app-server` and performs the protocol handshake itself.
+// Codex reads credentials from ~/.codex/auth.json (not the OPENAI_API_KEY env
+// var), so a launch command materializes the file before the broker spawns
+// `codex app-server`. To use ChatGPT-plan auth instead, set CODEX_AUTH_JSON
+// to the contents of your local ~/.codex/auth.json.
+const codexAuthJson =
+  process.env.CODEX_AUTH_JSON ??
+  JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: process.env.OPENAI_API_KEY! });
+
 const axon = await sdk.axon.create({ name: "codex-transport" });
 const devbox = await sdk.devbox.create({
   mounts: [{
@@ -201,11 +208,18 @@ const devbox = await sdk.devbox.create({
     protocol: "codex_json",
     agent_binary: "codex",
   }],
+  environment_variables: { CODEX_AUTH_JSON: codexAuthJson },
+  launch_parameters: {
+    launch_commands: [
+      'mkdir -p "$HOME/.codex" && umask 077 && printf \'%s\' "$CODEX_AUTH_JSON" > "$HOME/.codex/auth.json"',
+    ],
+  },
 });
 
-// Connect — unlike ACP/Claude there is no initialize() step.
+// Connect, then run the app-server initialize handshake.
 const conn = new CodexAxonConnection(axon, devbox);
 await conn.connect();
+await conn.initialize();
 
 // Timeline events classify every Axon event into a typed union — the recommended
 // way to build chat UIs. See "Timeline Events" below for the full API.
@@ -546,7 +560,7 @@ import type {
 
 Bidirectional, interactive client for the OpenAI Codex CLI via Axon. The broker spawns `codex app-server` in the devbox and proxies its newline-delimited JSON-RPC frames verbatim over the Axon channel — messages are yielded as raw app-server frames (`CodexFrame`).
 
-Unlike ACP/Claude there is **no client-side `initialize()` step** — the broker performs the app-server handshake itself. Codex has real server-side threads: the connection tracks the current thread id internally so `send()` "just works" (the first call starts a thread automatically), while `startThread()`/`resumeThread()` expose explicit thread control.
+Like ACP/Claude, call `initialize()` after `connect()` — it runs the app-server handshake (`initialize` request + `initialized` notification); the app-server rejects all other requests until it completes. Codex has real server-side threads: the connection tracks the current thread id internally so `send()` "just works" (the first call starts a thread automatically), while `startThread()`/`resumeThread()` expose explicit thread control.
 
 **Constructor**: `new CodexAxonConnection(axon, devbox, options?)`
 
@@ -576,7 +590,8 @@ Unlike ACP/Claude there is **no client-side `initialize()` step** — the broker
 | `devboxId: string` | The Runloop devbox ID |
 | `threadId: string \| undefined` | The active server-side thread id (set by `startThread()`, the `thread/started` notification, or `resumeThread()`) |
 | `isConnected` / `isDisconnected` | Transport health hints for supervisors |
-| `connect()` | Open the transport and start the background read loop (no initialize step) |
+| `connect()` | Open the transport and start the background read loop (call `initialize()` next) |
+| `initialize(params?)` | Run the app-server handshake: `initialize` request + `initialized` notification (required after `connect()`) |
 | `disconnect()` | Close the transport, fail pending requests, and run `onDisconnect` if provided |
 | `abortStream()` | Abort the SSE stream without clearing listeners |
 
@@ -912,7 +927,7 @@ type WireData = Record<string, any>;
 
 ## Known Limitations
 
-- **Explicit `connect()` required**: All connections require an explicit `await conn.connect()` call. ACP and Claude additionally require `initialize()` after it; Codex has no initialize step (the broker owns the app-server handshake). The constructor is lightweight and synchronous.
+- **Explicit `connect()` required**: All connections require an explicit `await conn.connect()` call followed by `initialize()` — ACP, Claude, and Codex alike. The constructor is lightweight and synchronous.
 - **Automatic reconnection (single retry)**: If an SSE stream drops unexpectedly, the SDK re-subscribes once and logs a `console.warn`. If the retry also fails, the connection is terminal — create a new instance.
 - **Permission handling** (Claude): The `ClaudeAxonConnection` auto-approves all tool use by default. Register a `"can_use_tool"` handler via `onControlRequest()` to customize.
 - **Approval handling** (Codex): The `CodexAxonConnection` auto-approves server-initiated approval requests by default. Register handlers via `onApprovalRequest()` to customize, or mount with `launch_args: ["-c", "approval_policy=never"]` to skip approval traffic entirely.

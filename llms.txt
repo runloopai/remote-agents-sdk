@@ -31,7 +31,7 @@ https://github.com/runloopai/remote-agents-sdk/blob/main/examples/feature-exampl
 
 ## Implementation Notes
 
-- Call `connect()` before `initialize()` (ACP/Claude; Codex has no initialize step).
+- Call `connect()` before `initialize()` (required for ACP, Claude, and Codex).
 - Use SDK type guards instead of raw Axon payloads.
 - Prefer Agent Gateway for secrets; MCP Gateway for MCP endpoints; Network Policy for egress.
 - Node >= 22 required.

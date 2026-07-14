@@ -16,8 +16,11 @@ import type {
   TimelineEventListener,
 } from "../shared/types.js";
 import { classifyCodexAxonEvent } from "./classify-codex-axon-event.js";
+import { VERSION } from "../version.js";
 import type {
   CodexApprovalRequestMethod,
+  InitializeParams,
+  InitializeResponse,
   ServerRequest,
   ThreadStartParams,
   ThreadStartResponse,
@@ -36,17 +39,25 @@ export interface CodexAxonConnectionOptions extends BaseConnectionOptions {
   threadStartParams?: ThreadStartParams;
   approvalHandlers?: Partial<Record<ApprovalMethod, ApprovalHandler>>;
   requestTimeoutMs?: number;
+  /**
+   * Overrides merged into the `initialize` request sent by
+   * {@link CodexAxonConnection.initialize | initialize()}. Defaults identify
+   * this SDK as the client with no extra capabilities.
+   */
+  initializeParams?: Partial<InitializeParams>;
 }
 /**
  * Native Codex app-server connection over an Axon channel.
  *
- * Unlike Claude, Codex requires no client-side initialize handshake. Connect,
- * send a prompt, then consume {@link receiveTurn}; the first send creates a
- * server-side thread automatically.
+ * Like Claude, Codex requires an `initialize` handshake before it accepts
+ * requests: call {@link connect}, then {@link initialize}, then send a prompt
+ * and consume {@link receiveTurn}; the first send creates a server-side
+ * thread automatically.
  *
  * @example
  * ```ts
  * await connection.connect();
+ * await connection.initialize();
  * await connection.send("Explain this repository");
  * for await (const event of connection.receiveTurn()) console.log(event);
  * ```
@@ -64,6 +75,9 @@ export class CodexAxonConnection {
   private aborted = false;
   private suppressAutoReconnect = false;
   private counter = 0;
+  /** Whether the app-server `initialize` handshake has completed successfully. */
+  private handshakeComplete = false;
+  private _initializeResponse: InitializeResponse | undefined;
   private pending = new PendingRequestMap<string | number, unknown>();
   private messageQueue: AsyncMessageQueue<CodexFrame>;
   private threadWaiters = new Set<(id: string) => void>();
@@ -104,8 +118,17 @@ export class CodexAxonConnection {
   get threadId(): string | undefined {
     return this._threadId;
   }
+  /** Whether the `initialize` handshake has completed. */
+  get isInitialized(): boolean {
+    return this.handshakeComplete;
+  }
+  /** The app-server's `initialize` response, once {@link initialize} has run. */
+  get initializeResponse(): InitializeResponse | undefined {
+    return this._initializeResponse;
+  }
   /**
-   * Opens the SSE transport and starts its read loop. No `initialize` frame is sent.
+   * Opens the SSE transport and starts its read loop. Call {@link initialize}
+   * next — the app-server rejects requests until the handshake completes.
    * @throws {@link ConnectionStateError} with `terminated` or `already_connected`.
    */
   async connect(): Promise<void> {
@@ -146,6 +169,69 @@ export class CodexAxonConnection {
     this.everConnected = true;
     this.readLoop();
   }
+  /**
+   * Runs the **Codex app-server `initialize` handshake**: sends the
+   * `initialize` request (client info + capabilities) and the `initialized`
+   * notification. Required once after {@link connect} — the app-server
+   * rejects all other requests with `-32600 "Not initialized"` until this
+   * completes. If the server was already initialized (e.g. by a previous
+   * session against the same process), that response is treated as success.
+   *
+   * Uses a longer timeout (120 s) because the app-server may still be starting.
+   *
+   * @param params Overrides merged over {@link CodexAxonConnectionOptions.initializeParams} and the SDK defaults.
+   * @throws {@link ConnectionStateError} If the connection is not reusable after a fatal broker error (`code: "terminated"`).
+   * @throws {@link ConnectionStateError} If {@link connect} has not been called yet (`code: "not_connected"`).
+   * @throws {@link ConnectionStateError} If the handshake has already completed (`code: "already_initialized"`).
+   */
+  async initialize(params?: Partial<InitializeParams>): Promise<void> {
+    if (this.fatal)
+      throw new ConnectionStateError(
+        "terminated",
+        "This connection hit a fatal broker error and cannot be reused. Create a new instance.",
+      );
+    if (!this.transport?.isReady())
+      throw new ConnectionStateError(
+        "not_connected",
+        "Not connected. Call connect() before initialize().",
+      );
+    if (this.handshakeComplete)
+      throw new ConnectionStateError(
+        "already_initialized",
+        "Already initialized. Call disconnect() before reinitializing.",
+      );
+    const initializeParams: InitializeParams = {
+      clientInfo: {
+        name: "runloop-remote-agents-sdk",
+        title: null,
+        version: VERSION,
+        ...this.options.initializeParams?.clientInfo,
+        ...params?.clientInfo,
+      },
+      capabilities:
+        params?.capabilities !== undefined
+          ? params.capabilities
+          : (this.options.initializeParams?.capabilities ?? null),
+    };
+    this.log("init", "sending initialize request");
+    try {
+      this._initializeResponse = (await this.request(
+        "initialize",
+        initializeParams,
+        120_000, // longer timeout for initialization
+      )) as InitializeResponse;
+    } catch (error) {
+      // A live app-server that already completed the handshake (previous
+      // session or broker-side init) rejects a second initialize; the
+      // connection is still fully usable, so treat it as success.
+      if (!/already\s+initiali[sz]ed/i.test(error instanceof Error ? error.message : ""))
+        throw error;
+      this.log("init", "app-server already initialized; continuing");
+    }
+    await this.transport.write({ method: "initialized" });
+    this.handshakeComplete = true;
+    this.log("init", "initialized");
+  }
   /** Aborts only the current SSE stream, preserving listeners. */
   abortStream(): void {
     this.aborted = true;
@@ -162,6 +248,7 @@ export class CodexAxonConnection {
     await this.transport?.close();
     this.transport = undefined;
     this.running = false;
+    this.handshakeComplete = false;
     await runDisconnectHook(this.options.onDisconnect, this.log, this.handleError);
     this.closed = false;
   }
