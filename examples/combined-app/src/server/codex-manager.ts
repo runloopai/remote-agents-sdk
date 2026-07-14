@@ -295,6 +295,9 @@ export class CodexConnectionManager {
       const threadId = this.connection.threadId ?? (await this.connection.startThread());
       const input: InputItem[] =
         typeof prompt === "string" ? [{ type: "text", text: prompt, text_elements: [] }] : prompt;
+      console.log(
+        `[codex] turn/start overrides=${JSON.stringify(this.turnOverrides)} collaborationMode=${JSON.stringify(collaborationMode) ?? "none"}`,
+      );
       await this.connection.request("turn/start", {
         threadId,
         input,
@@ -318,7 +321,12 @@ export class CodexConnectionManager {
       (this.turnOverrides.model as string | undefined) ??
       this.threadSettings.model ??
       this.storedOptions.model;
-    if (!model) return undefined; // no settings seen yet; warned at /plan time
+    if (!model) {
+      // /plan resolves and caches the model up front, so this should not
+      // happen — but never silently drop the mode the user asked for.
+      this.note("Warning: message sent WITHOUT plan mode (thread model unknown).");
+      return undefined;
+    }
     return {
       mode: this.modeKind,
       settings: {
@@ -328,6 +336,33 @@ export class CodexConnectionManager {
         developer_instructions: null, // null = the mode's built-in instructions
       },
     };
+  }
+
+  /**
+   * Resolves the thread's model for collaborationMode.settings: overrides
+   * first, then live thread settings, then the effective config from the
+   * app-server. Caches the result so /plan works even when the
+   * thread/settings/updated notification never fired.
+   */
+  private async resolveModel(): Promise<string | undefined> {
+    const known =
+      (this.turnOverrides.model as string | undefined) ??
+      this.threadSettings.model ??
+      this.storedOptions.model;
+    if (known) return known;
+    if (!this.connection) return undefined;
+    try {
+      await this.ensureLiveConnection();
+      const response = (await this.connection.request("config/read", {})) as {
+        config?: { model?: string | null };
+      };
+      const model = response?.config?.model ?? undefined;
+      if (model) this.threadSettings = { ...this.threadSettings, model };
+      return model;
+    } catch (err) {
+      console.error("[codex] config/read failed while resolving model:", err);
+      return undefined;
+    }
   }
 
   /**
@@ -341,14 +376,16 @@ export class CodexConnectionManager {
     const arg = rest.join(" ").trim();
 
     switch (cmd.toLowerCase()) {
-      case "plan":
+      case "plan": {
+        const model = await this.resolveModel();
+        if (!model) {
+          this.note("Cannot enter plan mode: unable to determine the thread's model.");
+          return true;
+        }
         this.modeKind = "plan";
-        this.note(
-          this.buildCollaborationMode()
-            ? "Plan mode on: Codex will read and plan, not modify. /default to exit."
-            : "Plan mode armed — it applies from your next message (waiting on thread settings for the model).",
-        );
+        this.note(`Plan mode on (${model}): Codex will read and plan, not modify. /default to exit.`);
         return true;
+      }
       case "default":
         this.modeKind = "default";
         this.note("Default mode restored.");
