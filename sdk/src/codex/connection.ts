@@ -15,8 +15,8 @@ import type {
   BaseConnectionOptions,
   TimelineEventListener,
 } from "../shared/types.js";
-import { classifyCodexAxonEvent } from "./classify-codex-axon-event.js";
 import { VERSION } from "../version.js";
+import { classifyCodexAxonEvent } from "./classify-codex-axon-event.js";
 import type {
   CodexApprovalRequestMethod,
   InitializeParams,
