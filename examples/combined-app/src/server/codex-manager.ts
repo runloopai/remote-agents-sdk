@@ -60,9 +60,9 @@ export class CodexConnectionManager {
     const axon = await sdk.axon.create({ name: "combined-app-codex" });
     this.axon = axon;
 
-    // The broker accepts protocol "codex", but the published
+    // The broker accepts protocol "codex_json", but the published
     // @runloop/api-client mount types don't include it yet.
-    const brokerProtocol: "acp" | "claude_json" | "codex" = "codex";
+    const brokerProtocol: "acp" | "claude_json" | "codex_json" = "codex_json";
 
     this.ws.broadcast(this.tag({ type: "connection_progress", step: "Provisioning sandbox..." }));
     const devbox = await sdk.devbox.create({

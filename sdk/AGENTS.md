@@ -18,7 +18,7 @@ utilities.
 | **Shared** | `@runloop/remote-agents-sdk/shared` | Common types (`BaseConnectionOptions`, `AxonEventView`, `AxonEventListener`) and utilities |
 
 Each module pairs with a devbox `broker_mount` `protocol`: `"acp"` for the ACP
-module, `"claude_json"` for the Claude module, `"codex"` for the Codex module.
+module, `"claude_json"` for the Claude module, `"codex_json"` for the Codex module.
 
 ## Required dependencies
 
@@ -191,7 +191,7 @@ const devbox = await sdk.devbox.create({
   mounts: [{
     type: "broker_mount",
     axon_id: axon.id,
-    protocol: "codex",
+    protocol: "codex_json",
     agent_binary: "codex",
   }],
 });

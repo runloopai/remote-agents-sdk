@@ -20,8 +20,8 @@ export type InstallStrategy =
  * Maps directly to the Runloop `broker_mount` API shape.
  */
 export interface BrokerMount {
-  /** Broker protocol: "acp" for ACP agents, "claude_json" for Claude Code, "codex" for native Codex. */
-  protocol: "acp" | "claude_json" | "codex";
+  /** Broker protocol: "acp" for ACP agents, "claude_json" for Claude Code, "codex_json" for native Codex. */
+  protocol: "acp" | "claude_json" | "codex_json";
   /** Path or name of the agent binary. */
   agentBinary?: string;
   /** CLI args passed to the agent binary. */

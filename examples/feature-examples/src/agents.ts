@@ -47,7 +47,7 @@ export const AGENTS: AgentConfig[] = [
       blueprint: "runloop/starter-x86_64",
     },
     brokerMount: {
-      protocol: "codex",
+      protocol: "codex_json",
       agentBinary: "codex",
       workingDirectory: "/home/user",
     },

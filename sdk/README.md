@@ -21,7 +21,7 @@ Each module pairs with a devbox `broker_mount` whose `protocol` field tells the 
 |-------------------|------------|---------------|
 | `acp` | ACP | Any ACP agent binary (e.g. `opencode acp`) |
 | `claude_json` | Claude | `claude` (Claude Code CLI) |
-| `codex` | Codex | `codex` (the broker spawns `codex app-server`) |
+| `codex_json` | Codex | `codex` (the broker spawns `codex app-server`) |
 
 ## Installation
 
@@ -198,7 +198,7 @@ const devbox = await sdk.devbox.create({
   mounts: [{
     type: "broker_mount",
     axon_id: axon.id,
-    protocol: "codex",
+    protocol: "codex_json",
     agent_binary: "codex",
   }],
 });

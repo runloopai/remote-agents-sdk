@@ -262,7 +262,7 @@ function validateConfig(agent: AgentConfig): void {
   const brokerProtocolByClientProtocol = {
     acp: "acp",
     claude: "claude_json",
-    codex: "codex",
+    codex: "codex_json",
   } as const;
   const expectedBrokerProtocol = brokerProtocolByClientProtocol[agent.protocol];
   if (agent.brokerMount.protocol !== expectedBrokerProtocol) {
@@ -324,7 +324,7 @@ function buildBrokerMount(
   return {
     type: "broker_mount" as const,
     axon_id: axonId,
-    // The broker accepts protocol "codex", but the published
+    // The broker accepts protocol "codex_json", but the published
     // @runloop/api-client mount types don't include it yet.
     protocol: config.protocol as "acp" | "claude_json",
     ...(config.agentBinary && { agent_binary: config.agentBinary }),
