@@ -3,7 +3,7 @@ import { api } from "./api.js";
 
 export interface AgentListItem {
   id: string;
-  agentType: "claude" | "acp";
+  agentType: "claude" | "acp" | "codex";
   name: string;
   axonId: string;
   devboxId: string;

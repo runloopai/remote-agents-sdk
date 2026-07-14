@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useClaudeAgent } from "./useClaudeAgent.js";
 import { useACPAgent } from "./useACPAgent.js";
+import { useCodexAgent } from "./useCodexAgent.js";
 import type { AgentType, IdleAgentState, UseAgentReturn } from "../types.js";
 
 const NOOP_ASYNC = async () => {};
@@ -34,14 +35,17 @@ export function useAgent(agentId: string | null, agentType: AgentType | null): U
   // stays idle (no WebSocket, no state updates) while satisfying the constraint.
   const claude = useClaudeAgent(agentType === "claude" ? agentId : null);
   const acp = useACPAgent(agentType === "acp" ? agentId : null);
+  const codex = useCodexAgent(agentType === "codex" ? agentId : null);
 
   const shutdown = useCallback(async () => {
     if (agentType === "claude") {
       await claude.shutdown();
     } else if (agentType === "acp") {
       await acp.shutdown();
+    } else if (agentType === "codex") {
+      await codex.shutdown();
     }
-  }, [agentType, claude.shutdown, acp.shutdown]);
+  }, [agentType, claude.shutdown, acp.shutdown, codex.shutdown]);
 
   if (agentType === "claude") {
     const { shutdown: _, ...rest } = claude;
@@ -50,6 +54,16 @@ export function useAgent(agentId: string | null, agentType: AgentType | null): U
       agentType: "claude" as const,
       shutdown,
       availableCommands: (claude.initInfo?.slashCommands ?? []).map((name) => ({ name, description: "" })),
+    };
+  }
+
+  if (agentType === "codex") {
+    const { shutdown: _, ...rest } = codex;
+    return {
+      ...rest,
+      agentType: "codex" as const,
+      shutdown,
+      availableCommands: [],
     };
   }
 

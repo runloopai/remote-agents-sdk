@@ -117,6 +117,22 @@ function ACPInitSections({ block }: { block: SystemInitBlock }) {
   );
 }
 
+function CodexInitSections({ block }: { block: SystemInitBlock }) {
+  const ext = block.extensions;
+  if (ext?.protocol !== "codex") return null;
+  return (
+    <div className="init-kv-rows">
+      {ext.threadId && (
+        <InitKVRow icon={"\u{1F9F5}"} label="Thread" value={ext.threadId} />
+      )}
+      {ext.modelProvider && (
+        <InitKVRow icon={"⚙"} label="Provider" value={ext.modelProvider} />
+      )}
+      {ext.cwd && <InitKVRow icon={"\u{1F4C1}"} label="Working Dir" value={ext.cwd} />}
+    </div>
+  );
+}
+
 export function SystemInitBlockView({
   block,
   expanded,
@@ -153,6 +169,7 @@ export function SystemInitBlockView({
         <div className="init-session-body">
           <ClaudeInitSections block={block} />
           <ACPInitSections block={block} />
+          <CodexInitSections block={block} />
           {block.commands.length > 0 && (
             <InitPillSection
               icon={"\u{1F4AC}"}

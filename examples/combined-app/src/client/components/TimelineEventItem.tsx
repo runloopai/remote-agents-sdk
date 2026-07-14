@@ -27,12 +27,13 @@ import type {
   SDKResultMessage,
   SDKSystemMessage,
 } from "@runloop/remote-agents-sdk/claude";
+import type { CodexProtocolTimelineEvent } from "@runloop/remote-agents-sdk/codex";
 import type { AgentStartedPayload, TimelineEvent } from "../types.js";
 import { PayloadTree, formatTime, originLabel, originBadgeClass } from "./shared.js";
 
 const isAgentStartedEvent = createCustomEventGuard<AgentStartedPayload>("agent_started");
 
-type TimelineKind = "system" | "acp_protocol" | "claude_protocol" | "unknown";
+type TimelineKind = "system" | "acp_protocol" | "claude_protocol" | "codex_protocol" | "unknown";
 
 interface TimelineSummary {
   icon: string;
@@ -134,6 +135,43 @@ function summarizeClaudeProtocol(event: ClaudeProtocolTimelineEvent): TimelineSu
   }
 }
 
+function summarizeCodexProtocol(event: CodexProtocolTimelineEvent): TimelineSummary {
+  switch (event.eventType) {
+    case "thread/started":
+      return { icon: "\u{1F195}", label: "thread/started", summary: event.data.params.thread.id.slice(0, 16), kindClass: "kind-protocol" };
+    case "turn/started":
+      return { icon: "▶️", label: "turn/started", summary: "", kindClass: "kind-protocol" };
+    case "turn/completed":
+      return { icon: "✅", label: "turn/completed", summary: event.data.params.turn.status, kindClass: "kind-protocol" };
+    case "item/started":
+    case "item/completed":
+      return { icon: "\u{1F4E6}", label: event.eventType, summary: event.data.params.item.type, kindClass: "kind-protocol" };
+    case "item/agentMessage/delta": {
+      const preview = event.data.params.delta.slice(0, 40);
+      return { icon: "\u{1F916}", label: "agentMessage/delta", summary: preview, kindClass: "kind-protocol" };
+    }
+    case "item/commandExecution/outputDelta":
+      return { icon: "\u{1F4BB}", label: "commandExecution/outputDelta", summary: "", kindClass: "kind-protocol" };
+    case "item/reasoning/textDelta":
+    case "item/reasoning/summaryTextDelta":
+    case "item/reasoning/summaryPartAdded":
+      return { icon: "\u{1F4AD}", label: event.eventType, summary: "", kindClass: "kind-protocol" };
+    case "error":
+      return { icon: "⚠️", label: "error", summary: event.data.params.error?.message ?? "", kindClass: "kind-system" };
+    case "response":
+      return { icon: "✅", label: "response", summary: String(event.data.id ?? ""), kindClass: "kind-protocol" };
+    case "item/commandExecution/requestApproval":
+    case "item/fileChange/requestApproval":
+    case "item/tool/requestUserInput":
+    case "item/permissions/requestApproval":
+    case "execCommandApproval":
+    case "applyPatchApproval":
+      return { icon: "\u{1F512}", label: event.eventType, summary: "approval", kindClass: "kind-permission" };
+    default:
+      return { icon: "\u{1F4E6}", label: (event as { eventType: string }).eventType, summary: "", kindClass: "kind-protocol" };
+  }
+}
+
 function summarizeTimelineEvent(event: TimelineEvent): TimelineSummary {
   if (isTurnStartedEvent(event)) {
     return { icon: "\u25B6\uFE0F", label: "turn.started", summary: "", kindClass: "kind-system" };
@@ -164,6 +202,8 @@ function summarizeTimelineEvent(event: TimelineEvent): TimelineSummary {
       return summarizeACPProtocol(event);
     case "claude_protocol":
       return summarizeClaudeProtocol(event);
+    case "codex_protocol":
+      return summarizeCodexProtocol(event);
     case "unknown": {
       if (isAgentStartedEvent(event)) {
         return { icon: "\u2699\uFE0F", label: "Agent Started", summary: event.data.agentType ?? "", kindClass: "kind-custom" };
@@ -185,6 +225,7 @@ function kindBadgeLabel(kind: TimelineKind, custom: boolean): string {
     case "system": return "SYS";
     case "acp_protocol": return "ACP";
     case "claude_protocol": return "CLAUDE";
+    case "codex_protocol": return "CODEX";
     case "unknown": return "?";
   }
 }
@@ -195,6 +236,7 @@ function kindBadgeClass(kind: TimelineKind, custom: boolean): string {
     case "system": return "tl-kind-system";
     case "acp_protocol": return "tl-kind-acp";
     case "claude_protocol": return "tl-kind-claude";
+    case "codex_protocol": return "tl-kind-codex";
     case "unknown": return "tl-kind-unknown";
   }
 }

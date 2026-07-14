@@ -64,6 +64,51 @@ export function registerPromptRoutes(app: Express, registry: AgentRegistry, ws: 
         });
 
         res.json({ ok: true });
+      } else if (entry.agentType === "codex") {
+        const manager = entry.codexManager!;
+        if (!manager.connection) {
+          res.status(400).json({ error: "Not connected" });
+          return;
+        }
+        const { content, text } = req.body;
+
+        const contentItems: Record<string, unknown>[] = Array.isArray(content)
+          ? content
+          : [{ type: "text", text }];
+
+        // Map attachments onto Codex UserInput items. Images ride along as
+        // data URLs; file attachments are flattened into text.
+        const prompt = contentItems.map((item) => {
+          switch (item.type) {
+            case "image":
+              return {
+                type: "image" as const,
+                url: `data:${item.mimeType};base64,${item.data}`,
+              };
+            case "file":
+              return {
+                type: "text" as const,
+                text: `--- ${item.name} ---\n${item.text}`,
+                text_elements: [],
+              };
+            default:
+              return {
+                type: "text" as const,
+                text: (item.text ?? "") as string,
+                text_elements: [],
+              };
+          }
+        });
+
+        manager.send(prompt).catch((err: unknown) => {
+          ws.broadcast({
+            type: "turn_error",
+            agentId: entry.id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+
+        res.json({ ok: true });
       } else {
         const manager = entry.acpManager!;
         const connection = manager.requireConnection();
@@ -127,6 +172,8 @@ export function registerPromptRoutes(app: Express, registry: AgentRegistry, ws: 
 
       if (entry.agentType === "claude") {
         await entry.claudeManager!.interrupt();
+      } else if (entry.agentType === "codex") {
+        await entry.codexManager!.interrupt();
       } else {
         const { connection, sessionId } = entry.acpManager!.requireSession();
         await connection.cancel({ sessionId });
