@@ -495,6 +495,18 @@ export function useCodexAgent(agentId: string | null): UseCodexAgentReturn {
         return;
       }
 
+      if (parsed.type === "system_note") {
+        dispatch({ type: "APPEND_MESSAGE", message: {
+          id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          role: "system" as const,
+          itemType: "system_event" as const,
+          eventKind: "devbox_lifecycle" as const,
+          label: parsed.text,
+          timestamp: Date.now(),
+        } });
+        return;
+      }
+
       if (parsed.type === "approval_request") {
         handleApprovalRequest(parsed.requestId, parsed.request);
       } else if (parsed.type === "turn_error") {
@@ -529,7 +541,11 @@ export function useCodexAgent(agentId: string | null): UseCodexAgentReturn {
       if (content && content.length > 0) {
         await api("/api/prompt", { agentId, content });
       } else {
-        await api("/api/prompt", { agentId, text });
+        const result = await api<{ ok: boolean; command?: boolean }>("/api/prompt", { agentId, text });
+        // Slash commands don't start a turn — clear the optimistic turn state.
+        if (result.command) {
+          dispatch({ type: "SET", patch: { isAgentTurn: false } });
+        }
       }
     } catch (err) {
       dispatch({ type: "SET", patch: { error: err instanceof Error ? err.message : String(err) } });

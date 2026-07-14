@@ -72,6 +72,17 @@ export function registerPromptRoutes(app: Express, registry: AgentRegistry, ws: 
         }
         const { content, text } = req.body;
 
+        // Native slash commands (/plan, /model, …) map onto app-server
+        // JSON-RPC methods instead of starting a turn.
+        const trimmed = typeof text === "string" ? text.trim() : "";
+        if (trimmed.startsWith("/") && !Array.isArray(content)) {
+          const handled = await manager.handleSlashCommand(trimmed);
+          if (handled) {
+            res.json({ ok: true, command: true });
+            return;
+          }
+        }
+
         const contentItems: Record<string, unknown>[] = Array.isArray(content)
           ? content
           : [{ type: "text", text }];

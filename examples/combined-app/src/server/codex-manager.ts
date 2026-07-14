@@ -72,6 +72,10 @@ export class CodexConnectionManager {
   // client connections (including suspend/resume). Run it once per devbox and
   // skip it on rewires so navigation doesn't publish redundant handshakes.
   private appServerInitialized = false;
+  // Sticky turn/start overrides set by slash commands (/plan, /model, …).
+  // The protocol applies them "for this turn and subsequent turns", but we
+  // resend them every turn so they survive connection rewires.
+  private turnOverrides: Record<string, unknown> = {};
   private pendingApprovals = new Map<
     string,
     { request: ApprovalRequest; resolve: (approve: boolean) => void }
@@ -262,7 +266,102 @@ export class CodexConnectionManager {
   async send(prompt: string | InputItem[]): Promise<void> {
     if (!this.connection) throw new HttpError(400, "Not connected");
     await this.ensureLiveConnection();
+    if (Object.keys(this.turnOverrides).length > 0) {
+      const threadId = this.connection.threadId ?? (await this.connection.startThread());
+      const input: InputItem[] =
+        typeof prompt === "string" ? [{ type: "text", text: prompt, text_elements: [] }] : prompt;
+      await this.connection.request("turn/start", { threadId, input, ...this.turnOverrides });
+      return;
+    }
     await this.connection.send(prompt);
+  }
+
+  /**
+   * Native slash commands, mapped onto app-server JSON-RPC methods.
+   * Returns false when the text is not a recognized command (the caller
+   * should send it as a normal prompt).
+   */
+  async handleSlashCommand(raw: string): Promise<boolean> {
+    if (!this.connection) throw new HttpError(400, "Not connected");
+    const [cmd = "", ...rest] = raw.slice(1).split(/\s+/);
+    const arg = rest.join(" ").trim();
+
+    switch (cmd.toLowerCase()) {
+      case "plan":
+        this.turnOverrides = {
+          ...this.turnOverrides,
+          sandboxPolicy: { type: "readOnly", networkAccess: true },
+          approvalPolicy: "on-request",
+        };
+        this.note("Plan mode on: read-only sandbox; edits and commands need approval. /default to exit.");
+        return true;
+      case "default":
+        this.turnOverrides = {
+          ...this.turnOverrides,
+          sandboxPolicy:
+            this.storedOptions.autoApprovePermissions === false
+              ? {
+                  type: "workspaceWrite",
+                  writableRoots: [],
+                  networkAccess: true,
+                  excludeTmpdirEnvVar: false,
+                  excludeSlashTmp: false,
+                }
+              : { type: "dangerFullAccess" },
+          approvalPolicy:
+            this.storedOptions.autoApprovePermissions === false ? "on-request" : "never",
+        };
+        this.note("Default mode restored.");
+        return true;
+      case "model":
+        if (!arg) {
+          this.note("Usage: /model <model-name>");
+          return true;
+        }
+        this.turnOverrides = { ...this.turnOverrides, model: arg };
+        this.note(`Model override for subsequent turns: ${arg}`);
+        return true;
+      case "effort":
+        if (!arg) {
+          this.note("Usage: /effort <low|medium|high>");
+          return true;
+        }
+        this.turnOverrides = { ...this.turnOverrides, effort: arg };
+        this.note(`Reasoning effort for subsequent turns: ${arg}`);
+        return true;
+      case "compact": {
+        await this.ensureLiveConnection();
+        const threadId = this.connection.threadId;
+        if (!threadId) {
+          this.note("No active thread to compact.");
+          return true;
+        }
+        await this.connection.request("thread/compact/start", { threadId });
+        this.note("Compacting thread context…");
+        return true;
+      }
+      case "review": {
+        await this.ensureLiveConnection();
+        const threadId = this.connection.threadId ?? (await this.connection.startThread());
+        const target = arg
+          ? { type: "custom", instructions: arg }
+          : { type: "uncommittedChanges" };
+        await this.connection.request("review/start", { threadId, target });
+        this.note(arg ? `Review started: ${arg}` : "Reviewing uncommitted changes…");
+        return true;
+      }
+      case "help":
+        this.note(
+          "Commands: /plan, /default, /model <name>, /effort <low|medium|high>, /compact, /review [instructions], /help",
+        );
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private note(text: string): void {
+    this.ws.broadcast(this.tag({ type: "system_note", text }));
   }
 
   /**
