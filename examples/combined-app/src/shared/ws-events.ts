@@ -6,7 +6,6 @@ export type BaseWsEvent =
   | { type: "timeline_event"; event: ACPTimelineEvent | ClaudeTimelineEvent | CodexTimelineEvent }
   | { type: "connection_progress"; step: string }
   | { type: "turn_error"; error: string }
-  | { type: "system_note"; text: string }
   | { type: "control_request"; controlRequest: SDKControlRequest }
   | { type: "permission_request"; requestId: string; request: RequestPermissionRequest }
   | { type: "permission_dismissed" }

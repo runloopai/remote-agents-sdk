@@ -404,6 +404,23 @@ export function useCodexAgent(agentId: string | null): UseCodexAgentReturn {
   function handleTimelineEvent(tlEvent: CodexTimelineEvent): void {
     dispatch({ type: "APPEND_TIMELINE_EVENT", event: tlEvent });
 
+    // Slash-command outcomes are published to the Axon as app/system_note
+    // events, so they render live and replay on resubscribe.
+    if (tlEvent.axonEvent.event_type === "app/system_note") {
+      const payload = tryParseTimelinePayload<{ text?: string }>(tlEvent);
+      if (payload?.text) {
+        dispatch({ type: "APPEND_MESSAGE", message: {
+          id: `note-${tlEvent.axonEvent.sequence}`,
+          role: "system" as const,
+          itemType: "system_event" as const,
+          eventKind: "devbox_lifecycle" as const,
+          label: payload.text,
+          timestamp: tlEvent.axonEvent.timestamp_ms ?? Date.now(),
+        } });
+      }
+      return;
+    }
+
     // The client's own turn/start frames echo back as unknown USER_EVENTs —
     // render them as user chat messages.
     if (isFromUser(tlEvent.axonEvent) && tlEvent.axonEvent.event_type === "turn/start") {
@@ -492,18 +509,6 @@ export function useCodexAgent(agentId: string | null): UseCodexAgentReturn {
 
       if (parsed.type === "connection_progress") {
         dispatch({ type: "SET", patch: { connectionStatus: parsed.step } });
-        return;
-      }
-
-      if (parsed.type === "system_note") {
-        dispatch({ type: "APPEND_MESSAGE", message: {
-          id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          role: "system" as const,
-          itemType: "system_event" as const,
-          eventKind: "devbox_lifecycle" as const,
-          label: parsed.text,
-          timestamp: Date.now(),
-        } });
         return;
       }
 

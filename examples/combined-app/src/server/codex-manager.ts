@@ -360,8 +360,17 @@ export class CodexConnectionManager {
     }
   }
 
+  // Notes are published to the Axon (not just the live WS) so slash-command
+  // outcomes are part of the durable event log and replay on resubscribe.
   private note(text: string): void {
-    this.ws.broadcast(this.tag({ type: "system_note", text }));
+    void this.connection
+      ?.publish({
+        event_type: "app/system_note",
+        origin: "EXTERNAL_EVENT",
+        source: "combined-app",
+        payload: JSON.stringify({ text }),
+      })
+      .catch((err: unknown) => console.error("[codex] failed to publish note:", err));
   }
 
   /**
