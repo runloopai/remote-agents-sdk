@@ -34,6 +34,6 @@ server.listen(PORT, () => {
     `ANTHROPIC_API_KEY: ${process.env.ANTHROPIC_API_KEY ? "set" : "NOT SET"}`,
   );
   console.log(
-    `OPENAI_API_KEY: ${process.env.OPENAI_API_KEY ? "set" : "NOT SET"} (required for Codex agents)`,
+    `OPENAI_API_KEY: ${process.env.OPENAI_API_KEY ? "set" : "NOT SET"}, CODEX_AUTH_JSON: ${process.env.CODEX_AUTH_JSON ? "set" : "NOT SET"} (Codex agents need one of these)`,
   );
 });

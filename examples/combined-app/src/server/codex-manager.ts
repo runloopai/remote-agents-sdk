@@ -12,15 +12,54 @@ import type { WsBroadcaster, WsEvent, BaseWsEvent } from "./ws.ts";
 export interface CodexStartOptions {
   blueprintName?: string;
   launchCommands?: string[];
+  /** Extra CLI args for the `codex` binary, appended after the defaults. */
+  launchArgs?: string[];
   workingDir?: string;
   systemPrompt?: string;
   model?: string;
   autoApprovePermissions?: boolean;
 }
 
+// Full-auto defaults: `--dangerously-bypass-approvals-and-sandbox` is a
+// `codex exec` flag the app-server doesn't accept; these config overrides are
+// its app-server equivalent (no approval traffic, unsandboxed execution).
+// Skipped when interactive approvals are on so the UI approval flow still fires.
+const FULL_AUTO_LAUNCH_ARGS = [
+  "-c",
+  "approval_policy=never",
+  "-c",
+  "sandbox_mode=danger-full-access",
+];
+
 // Give the user plenty of time to answer an approval in the UI before the
 // SDK's handler timeout declines it.
 const APPROVAL_TIMEOUT_MS = 600_000;
+
+// Codex reads credentials from ~/.codex/auth.json, not the OPENAI_API_KEY env
+// var, so a launch command materializes the file from $CODEX_AUTH_JSON before
+// the broker spawns `codex app-server`.
+const WRITE_CODEX_AUTH_CMD =
+  'mkdir -p "$HOME/.codex" && umask 077 && printf \'%s\' "$CODEX_AUTH_JSON" > "$HOME/.codex/auth.json"';
+
+/**
+ * Resolve the auth.json contents to install on the devbox. `CODEX_AUTH_JSON`
+ * (full file contents, e.g. `$(cat ~/.codex/auth.json)` for ChatGPT-plan
+ * auth) wins; otherwise an api-key-mode file is built from `OPENAI_API_KEY`.
+ */
+function resolveCodexAuthJson(): string | undefined {
+  if (process.env.CODEX_AUTH_JSON) {
+    try {
+      // Validate and normalize to a single line so the devbox writes exactly
+      // what Codex expects, and a bad paste fails here rather than in the box.
+      return JSON.stringify(JSON.parse(process.env.CODEX_AUTH_JSON));
+    } catch {
+      throw new HttpError(400, "CODEX_AUTH_JSON is not valid JSON");
+    }
+  }
+  if (process.env.OPENAI_API_KEY)
+    return JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: process.env.OPENAI_API_KEY });
+  return undefined;
+}
 
 export class CodexConnectionManager {
   connection: CodexAxonConnection | null = null;
@@ -29,6 +68,10 @@ export class CodexConnectionManager {
   private axon: Axon | null = null;
   private devbox: Devbox | null = null;
   private storedOptions: CodexStartOptions = {};
+  // The initialize handshake is per app-server *process*, which outlives our
+  // client connections (including suspend/resume). Run it once per devbox and
+  // skip it on rewires so navigation doesn't publish redundant handshakes.
+  private appServerInitialized = false;
   private pendingApprovals = new Map<
     string,
     { request: ApprovalRequest; resolve: (approve: boolean) => void }
@@ -47,9 +90,11 @@ export class CodexConnectionManager {
     const apiKey = process.env.RUNLOOP_API_KEY;
     const baseUrl = process.env.RUNLOOP_BASE_URL;
     const openaiApiKey = process.env.OPENAI_API_KEY;
+    const codexAuthJson = resolveCodexAuthJson();
 
     if (!apiKey) throw new HttpError(401, "RUNLOOP_API_KEY not set in server .env");
-    if (!openaiApiKey) throw new HttpError(401, "OPENAI_API_KEY not set in server .env");
+    if (!codexAuthJson)
+      throw new HttpError(401, "Neither OPENAI_API_KEY nor CODEX_AUTH_JSON set in server .env");
 
     const sdk = new RunloopSDK({
       bearerToken: apiKey,
@@ -74,14 +119,19 @@ export class CodexConnectionManager {
           axon_id: axon.id,
           protocol: brokerProtocol as "acp" | "claude_json",
           agent_binary: "/home/user/.local/bin/codex",
+          launch_args: [
+            ...(opts.autoApprovePermissions !== false ? FULL_AUTO_LAUNCH_ARGS : []),
+            ...(opts.launchArgs ?? []),
+          ],
           ...(opts.workingDir ? { working_directory: opts.workingDir } : {}),
         },
       ],
       environment_variables: {
-        OPENAI_API_KEY: openaiApiKey,
+        CODEX_AUTH_JSON: codexAuthJson,
+        ...(openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {}),
       },
       launch_parameters: {
-        ...(opts.launchCommands?.length ? { launch_commands: opts.launchCommands } : {}),
+        launch_commands: [WRITE_CODEX_AUTH_CMD, ...(opts.launchCommands ?? [])],
         lifecycle: {
           after_idle: {
             idle_time_seconds: 60,
@@ -102,6 +152,7 @@ export class CodexConnectionManager {
       onDisconnect: async () => { await devbox.shutdown(); },
     });
     await conn.connect();
+    await this.initializeOnce(conn);
 
     this.ws.broadcast(this.tag({ type: "connection_progress", step: "Starting thread..." }));
     try {
@@ -122,14 +173,17 @@ export class CodexConnectionManager {
   private wireConnection(
     axon: Axon,
     devbox: Devbox,
-    opts?: { onDisconnect?: () => Promise<void> },
+    opts?: { onDisconnect?: () => Promise<void>; afterSequence?: number },
   ): CodexAxonConnection {
-    this.axonEvents = [];
+    // A fresh wire replays full history for the client; a resume-from-sequence
+    // rewire keeps the accumulated events so the UI sees no duplicates.
+    if (opts?.afterSequence == null) this.axonEvents = [];
 
     const interactiveApprovals = this.storedOptions.autoApprovePermissions === false;
 
     const conn = new CodexAxonConnection(axon, devbox, {
       verbose: true,
+      ...(opts?.afterSequence != null ? { afterSequence: opts.afterSequence, replay: false } : {}),
       ...(opts?.onDisconnect ? { onDisconnect: opts.onDisconnect } : {}),
       ...(interactiveApprovals ? { requestTimeoutMs: APPROVAL_TIMEOUT_MS } : {}),
       threadStartParams: {
@@ -196,11 +250,37 @@ export class CodexConnectionManager {
     }
     const conn = this.wireConnection(this.axon, this.devbox);
     await conn.connect();
+    await this.initializeOnce(conn);
+  }
+
+  private async initializeOnce(conn: CodexAxonConnection): Promise<void> {
+    if (this.appServerInitialized) return;
+    await conn.initialize();
+    this.appServerInitialized = true;
   }
 
   async send(prompt: string | InputItem[]): Promise<void> {
     if (!this.connection) throw new HttpError(400, "Not connected");
+    await this.ensureLiveConnection();
     await this.connection.send(prompt);
+  }
+
+  /**
+   * Re-wires the connection if its SSE stream silently died (the SDK retries
+   * a dropped stream once per connection lifetime, so a long idle/suspended
+   * devbox can outlive it). Resumes from the last seen sequence so previously
+   * broadcast events are not replayed to the client.
+   */
+  private async ensureLiveConnection(): Promise<void> {
+    if (!this.connection || !this.connection.isDisconnected) return;
+    if (!this.axon || !this.devbox) throw new HttpError(400, "Not connected");
+    console.log("[codex] event stream dropped — re-wiring connection before send");
+    const afterSequence = this.axonEvents.at(-1)?.sequence;
+    const conn = this.wireConnection(this.axon, this.devbox, {
+      ...(afterSequence != null ? { afterSequence } : {}),
+    });
+    await conn.connect();
+    await this.initializeOnce(conn);
   }
 
   async interrupt(): Promise<void> {
@@ -217,6 +297,7 @@ export class CodexConnectionManager {
     this.devbox = null;
     this.axonEvents = [];
     this.storedOptions = {};
+    this.appServerInitialized = false;
     for (const [, pending] of this.pendingApprovals) {
       pending.resolve(false);
     }
