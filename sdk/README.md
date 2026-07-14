@@ -599,7 +599,7 @@ Like ACP/Claude, call `initialize()` after `connect()` — it runs the app-serve
 
 | Method | Description |
 |--------|-------------|
-| `send(prompt)` | Send a prompt (`string` or `InputItem[]`) as a `turn/start`; auto-starts a thread on first call |
+| `send(prompt, options?)` | Send a prompt (`string` or `InputItem[]`) as a `turn/start`; auto-starts a thread on first call. `options` (`TurnOptions`) carries per-turn overrides: model, effort, sandboxPolicy, experimental `collaborationMode`, … |
 | `steer(prompt)` | Steer the current in-flight turn (`turn/steer`) |
 | `receiveTurn()` | Async iterator yielding frames until (and including) `turn/completed` |
 | `receiveAgentEvents()` | Async iterator yielding all agent frames indefinitely |
@@ -611,7 +611,9 @@ Like ACP/Claude, call `initialize()` after `connect()` — it runs the app-serve
 | `startThread(params?)` | Start a server-side thread (`thread/start`), track it, and return its id |
 | `resumeThread(threadId)` | Resume a known thread (`thread/resume`) and make it current |
 | `interrupt()` | Interrupt the current turn (`turn/interrupt`) — the broker supplies the live turn id |
-| `request(method, params?)` | Escape hatch: send any app-server request (e.g. `model/list`, `thread/name/set`) and await its correlated JSON-RPC response |
+| `startReview(target?, delivery?)` | Start a Codex review (`review/start`); defaults to reviewing uncommitted changes |
+| `compactThread()` | Compact the active thread's context (`thread/compact/start`) |
+| `readConfig(params?)` | Read the app-server's effective configuration (`config/read`) |
 
 **Listeners**:
 

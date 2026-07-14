@@ -3,7 +3,9 @@ import type { Axon, Devbox } from "@runloop/api-client/sdk";
 import {
   CodexAxonConnection,
   type ApprovalRequest,
+  type CollaborationMode,
   type InputItem,
+  type TurnOptions,
 } from "@runloop/remote-agents-sdk/codex";
 import type { AxonEventView } from "@runloop/remote-agents-sdk/shared";
 import { HttpError } from "./http-errors.ts";
@@ -75,7 +77,7 @@ export class CodexConnectionManager {
   // Sticky turn/start overrides set by slash commands (/model, /effort).
   // The protocol applies them "for this turn and subsequent turns", but we
   // resend them every turn so they survive connection rewires.
-  private turnOverrides: Record<string, unknown> = {};
+  private turnOverrides: TurnOptions = {};
   // Native collaboration mode (/plan, /default), sent as turn/start's
   // collaborationMode param. null = never set; let the app-server default.
   private modeKind: "plan" | "default" | null = null;
@@ -291,22 +293,14 @@ export class CodexConnectionManager {
     if (!this.connection) throw new HttpError(400, "Not connected");
     await this.ensureLiveConnection();
     const collaborationMode = this.buildCollaborationMode();
-    if (Object.keys(this.turnOverrides).length > 0 || collaborationMode) {
-      const threadId = this.connection.threadId ?? (await this.connection.startThread());
-      const input: InputItem[] =
-        typeof prompt === "string" ? [{ type: "text", text: prompt, text_elements: [] }] : prompt;
-      console.log(
-        `[codex] turn/start overrides=${JSON.stringify(this.turnOverrides)} collaborationMode=${JSON.stringify(collaborationMode) ?? "none"}`,
-      );
-      await this.connection.request("turn/start", {
-        threadId,
-        input,
-        ...this.turnOverrides,
-        ...(collaborationMode ? { collaborationMode } : {}),
-      });
-      return;
+    const options: TurnOptions = {
+      ...this.turnOverrides,
+      ...(collaborationMode ? { collaborationMode } : {}),
+    };
+    if (Object.keys(options).length > 0) {
+      console.log(`[codex] turn options: ${JSON.stringify(options)}`);
     }
-    await this.connection.send(prompt);
+    await this.connection.send(prompt, options);
   }
 
   /**
@@ -315,12 +309,10 @@ export class CodexConnectionManager {
    * so echo the thread's live model/effort (mirrored from
    * thread/settings/updated), letting /model and /effort overrides win.
    */
-  private buildCollaborationMode(): Record<string, unknown> | undefined {
+  private buildCollaborationMode(): CollaborationMode | undefined {
     if (!this.modeKind) return undefined;
     const model =
-      (this.turnOverrides.model as string | undefined) ??
-      this.threadSettings.model ??
-      this.storedOptions.model;
+      this.turnOverrides.model ?? this.threadSettings.model ?? this.storedOptions.model;
     if (!model) {
       // /plan resolves and caches the model up front, so this should not
       // happen — but never silently drop the mode the user asked for.
@@ -331,8 +323,7 @@ export class CodexConnectionManager {
       mode: this.modeKind,
       settings: {
         model,
-        reasoning_effort:
-          (this.turnOverrides.effort as string | undefined) ?? this.threadSettings.effort ?? null,
+        reasoning_effort: this.turnOverrides.effort ?? this.threadSettings.effort ?? null,
         developer_instructions: null, // null = the mode's built-in instructions
       },
     };
@@ -346,17 +337,13 @@ export class CodexConnectionManager {
    */
   private async resolveModel(): Promise<string | undefined> {
     const known =
-      (this.turnOverrides.model as string | undefined) ??
-      this.threadSettings.model ??
-      this.storedOptions.model;
+      this.turnOverrides.model ?? this.threadSettings.model ?? this.storedOptions.model;
     if (known) return known;
     if (!this.connection) return undefined;
     try {
       await this.ensureLiveConnection();
-      const response = (await this.connection.request("config/read", {})) as {
-        config?: { model?: string | null };
-      };
-      const model = response?.config?.model ?? undefined;
+      const response = await this.connection.readConfig();
+      const model = response.config?.model ?? undefined;
       if (model) this.threadSettings = { ...this.threadSettings, model };
       return model;
     } catch (err) {
@@ -413,17 +400,15 @@ export class CodexConnectionManager {
           this.note("No active thread to compact.");
           return true;
         }
-        await this.connection.request("thread/compact/start", { threadId });
+        await this.connection.compactThread();
         this.note("Compacting thread context…");
         return true;
       }
       case "review": {
         await this.ensureLiveConnection();
-        const threadId = this.connection.threadId ?? (await this.connection.startThread());
-        const target = arg
-          ? { type: "custom", instructions: arg }
-          : { type: "uncommittedChanges" };
-        await this.connection.request("review/start", { threadId, target });
+        await this.connection.startReview(
+          arg ? { type: "custom", instructions: arg } : { type: "uncommittedChanges" },
+        );
         this.note(arg ? `Review started: ${arg}` : "Reviewing uncommitted changes…");
         return true;
       }

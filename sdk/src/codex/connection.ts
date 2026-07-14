@@ -19,11 +19,18 @@ import { VERSION } from "../version.js";
 import { classifyCodexAxonEvent } from "./classify-codex-axon-event.js";
 import type {
   CodexApprovalRequestMethod,
+  CollaborationMode,
+  ConfigReadParams,
+  ConfigReadResponse,
   InitializeParams,
   InitializeResponse,
+  ReviewDelivery,
+  ReviewStartResponse,
+  ReviewTarget,
   ServerRequest,
   ThreadStartParams,
   ThreadStartResponse,
+  TurnStartParams,
   UserInput,
 } from "./protocol/index.js";
 import { CODEX_APPROVAL_REQUEST_METHOD_SET } from "./protocol/index.js";
@@ -31,6 +38,16 @@ import { CodexAxonTransport, type CodexFrame, type CodexTransport } from "./tran
 import type { CodexTimelineEvent } from "./types.js";
 
 export type InputItem = UserInput;
+/**
+ * Per-turn overrides for {@link CodexAxonConnection.send}: everything
+ * `turn/start` accepts beyond the thread id and input (model, effort,
+ * sandboxPolicy, approvalPolicy, …). `collaborationMode` is an experimental
+ * app-server field absent from the generated {@link TurnStartParams}; using
+ * it requires initializing with capabilities `{ experimentalApi: true }`.
+ */
+export type TurnOptions = Omit<TurnStartParams, "threadId" | "input"> & {
+  collaborationMode?: CollaborationMode | null;
+};
 export type ApprovalMethod = CodexApprovalRequestMethod;
 export type ApprovalRequest = Extract<ServerRequest, { method: ApprovalMethod }>;
 export type ApprovalHandler = (request: ApprovalRequest) => Promise<unknown> | unknown;
@@ -398,10 +415,12 @@ export class CodexAxonConnection {
     }
   }
   /**
-   * Sends an arbitrary app-server request and correlates its JSON-RPC response by id.
+   * Sends an app-server request and correlates its JSON-RPC response by id.
+   * Internal: the public surface is the typed methods ({@link send},
+   * {@link startReview}, {@link compactThread}, {@link readConfig}, …).
    * @throws {@link ConnectionStateError} with `terminated` or `not_connected`.
    */
-  async request(
+  private async request(
     method: string,
     params?: unknown,
     timeoutMs = this.options.requestTimeoutMs ?? 60_000,
@@ -462,12 +481,47 @@ export class CodexAxonConnection {
       if (waiter) this.threadWaiters.delete(waiter);
     }
   }
-  /** Sends text or structured input, creating a thread on the first call. */
-  async send(prompt: string | InputItem[]): Promise<void> {
+  /**
+   * Sends text or structured input, creating a thread on the first call.
+   * `options` carries per-turn overrides (see {@link TurnOptions}); the
+   * app-server applies them to this turn and subsequent turns.
+   */
+  async send(prompt: string | InputItem[], options?: TurnOptions): Promise<void> {
     const threadId = this._threadId ?? (await this.startThread());
     const input: InputItem[] =
       typeof prompt === "string" ? [{ type: "text", text: prompt, text_elements: [] }] : prompt;
-    await this.request("turn/start", { threadId, input });
+    await this.request("turn/start", { threadId, input, ...options });
+  }
+
+  /**
+   * Starts a Codex review on the current thread (`review/start`), creating a
+   * thread if needed. Defaults to reviewing uncommitted changes.
+   */
+  async startReview(
+    target: ReviewTarget = { type: "uncommittedChanges" },
+    delivery?: ReviewDelivery | null,
+  ): Promise<ReviewStartResponse> {
+    const threadId = this._threadId ?? (await this.startThread());
+    return (await this.request("review/start", {
+      threadId,
+      target,
+      ...(delivery !== undefined ? { delivery } : {}),
+    })) as ReviewStartResponse;
+  }
+
+  /** Compacts the active thread's context server-side (`thread/compact/start`). */
+  async compactThread(): Promise<void> {
+    if (!this._threadId)
+      throw new ConnectionStateError(
+        "not_connected",
+        "No active thread. Call startThread() first.",
+      );
+    await this.request("thread/compact/start", { threadId: this._threadId });
+  }
+
+  /** Reads the app-server's effective configuration (`config/read`). */
+  async readConfig(params: ConfigReadParams = {}): Promise<ConfigReadResponse> {
+    return (await this.request("config/read", params)) as ConfigReadResponse;
   }
   /** Interrupts the broker adapter's currently tracked turn. */
   async interrupt(): Promise<void> {
