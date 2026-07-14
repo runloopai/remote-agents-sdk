@@ -764,6 +764,50 @@ describe("axonStream", () => {
       expect(published[0].source).toBe("acp-sdk-client");
     });
 
+    it("publishes with a custom source when provided via options", async () => {
+      const { writable } = axonStream({ axon: axon as never, source: "my-custom-client" });
+
+      await writeMessage(writable, {
+        jsonrpc: "2.0",
+        method: "session/cancel",
+        params: { sessionId: "s1" },
+      });
+
+      expect(published[0].source).toBe("my-custom-client");
+    });
+
+    it("resolves the source lazily on each publish when given a resolver", async () => {
+      let current = "first";
+      const { writable } = axonStream({ axon: axon as never, source: () => current });
+
+      await writeMessage(writable, {
+        jsonrpc: "2.0",
+        method: "session/cancel",
+        params: { sessionId: "s1" },
+      });
+      current = "second";
+      await writeMessage(writable, {
+        jsonrpc: "2.0",
+        method: "session/cancel",
+        params: { sessionId: "s2" },
+      });
+
+      expect(published[0].source).toBe("first");
+      expect(published[1].source).toBe("second");
+    });
+
+    it("falls back to the default when the resolver returns undefined", async () => {
+      const { writable } = axonStream({ axon: axon as never, source: () => undefined });
+
+      await writeMessage(writable, {
+        jsonrpc: "2.0",
+        method: "session/cancel",
+        params: { sessionId: "s1" },
+      });
+
+      expect(published[0].source).toBe("acp-sdk-client");
+    });
+
     it("publishes JSON-RPC notifications with method as event_type", async () => {
       const { writable } = axonStream({ axon: axon as never });
 

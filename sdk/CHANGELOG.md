@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.4](https://github.com/runloopai/remote-agents-sdk/compare/remote-agents-sdk-v0.4.3...remote-agents-sdk-v0.4.4) (2026-06-26)
+
+
+### Features
+
+* **sdk:** make the published event `source` configurable ([#131](https://github.com/runloopai/remote-agents-sdk/issues/131)) ([89e5614](https://github.com/runloopai/remote-agents-sdk/commit/89e56146f266c27d812bf7111f9dd80e387eddca))
+
 ## [0.4.2](https://github.com/runloopai/remote-agents-sdk/compare/agent-axon-client-v0.4.1...agent-axon-client-v0.4.2) (2026-04-16)
 
 
