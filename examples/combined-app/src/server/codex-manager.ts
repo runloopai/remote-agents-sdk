@@ -193,6 +193,11 @@ export class CodexConnectionManager {
 
     const conn = new CodexAxonConnection(axon, devbox, {
       verbose: true,
+      // turn/start.collaborationMode (used by /plan) is an experimental API
+      // field; the app-server rejects it unless the client opts in here.
+      initializeParams: {
+        capabilities: { experimentalApi: true, requestAttestation: false },
+      },
       ...(opts?.afterSequence != null ? { afterSequence: opts.afterSequence, replay: false } : {}),
       ...(opts?.onDisconnect ? { onDisconnect: opts.onDisconnect } : {}),
       ...(interactiveApprovals ? { requestTimeoutMs: APPROVAL_TIMEOUT_MS } : {}),
