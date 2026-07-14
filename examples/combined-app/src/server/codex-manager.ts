@@ -72,10 +72,16 @@ export class CodexConnectionManager {
   // client connections (including suspend/resume). Run it once per devbox and
   // skip it on rewires so navigation doesn't publish redundant handshakes.
   private appServerInitialized = false;
-  // Sticky turn/start overrides set by slash commands (/plan, /model, …).
+  // Sticky turn/start overrides set by slash commands (/model, /effort).
   // The protocol applies them "for this turn and subsequent turns", but we
   // resend them every turn so they survive connection rewires.
   private turnOverrides: Record<string, unknown> = {};
+  // Native collaboration mode (/plan, /default), sent as turn/start's
+  // collaborationMode param. null = never set; let the app-server default.
+  private modeKind: "plan" | "default" | null = null;
+  // Live thread settings mirrored from thread/settings/updated notifications;
+  // collaborationMode.settings requires a model, so we echo the thread's own.
+  private threadSettings: { model?: string; effort?: string | null } = {};
   private pendingApprovals = new Map<
     string,
     { request: ApprovalRequest; resolve: (approve: boolean) => void }
@@ -206,6 +212,19 @@ export class CodexConnectionManager {
 
     conn.onAxonEvent((ev) => {
       this.axonEvents.push(ev);
+      if (ev.origin === "AGENT_EVENT" && ev.event_type === "thread/settings/updated" && ev.payload) {
+        try {
+          const frame = JSON.parse(ev.payload) as {
+            params?: { threadSettings?: { model?: string; effort?: string | null } };
+          };
+          const settings = frame.params?.threadSettings;
+          if (settings?.model) {
+            this.threadSettings = { model: settings.model, effort: settings.effort ?? null };
+          }
+        } catch {
+          // Malformed payloads surface through the normal timeline path.
+        }
+      }
     });
 
     conn.onTimelineEvent((ev) => {
@@ -266,14 +285,44 @@ export class CodexConnectionManager {
   async send(prompt: string | InputItem[]): Promise<void> {
     if (!this.connection) throw new HttpError(400, "Not connected");
     await this.ensureLiveConnection();
-    if (Object.keys(this.turnOverrides).length > 0) {
+    const collaborationMode = this.buildCollaborationMode();
+    if (Object.keys(this.turnOverrides).length > 0 || collaborationMode) {
       const threadId = this.connection.threadId ?? (await this.connection.startThread());
       const input: InputItem[] =
         typeof prompt === "string" ? [{ type: "text", text: prompt, text_elements: [] }] : prompt;
-      await this.connection.request("turn/start", { threadId, input, ...this.turnOverrides });
+      await this.connection.request("turn/start", {
+        threadId,
+        input,
+        ...this.turnOverrides,
+        ...(collaborationMode ? { collaborationMode } : {}),
+      });
       return;
     }
     await this.connection.send(prompt);
+  }
+
+  /**
+   * Codex's native mode switch: turn/start's collaborationMode param
+   * ({ mode: "plan" | "default", settings }). Its settings require a model,
+   * so echo the thread's live model/effort (mirrored from
+   * thread/settings/updated), letting /model and /effort overrides win.
+   */
+  private buildCollaborationMode(): Record<string, unknown> | undefined {
+    if (!this.modeKind) return undefined;
+    const model =
+      (this.turnOverrides.model as string | undefined) ??
+      this.threadSettings.model ??
+      this.storedOptions.model;
+    if (!model) return undefined; // no settings seen yet; warned at /plan time
+    return {
+      mode: this.modeKind,
+      settings: {
+        model,
+        reasoning_effort:
+          (this.turnOverrides.effort as string | undefined) ?? this.threadSettings.effort ?? null,
+        developer_instructions: null, // null = the mode's built-in instructions
+      },
+    };
   }
 
   /**
@@ -288,29 +337,15 @@ export class CodexConnectionManager {
 
     switch (cmd.toLowerCase()) {
       case "plan":
-        this.turnOverrides = {
-          ...this.turnOverrides,
-          sandboxPolicy: { type: "readOnly", networkAccess: true },
-          approvalPolicy: "on-request",
-        };
-        this.note("Plan mode on: read-only sandbox; edits and commands need approval. /default to exit.");
+        this.modeKind = "plan";
+        this.note(
+          this.buildCollaborationMode()
+            ? "Plan mode on: Codex will read and plan, not modify. /default to exit."
+            : "Plan mode armed — it applies from your next message (waiting on thread settings for the model).",
+        );
         return true;
       case "default":
-        this.turnOverrides = {
-          ...this.turnOverrides,
-          sandboxPolicy:
-            this.storedOptions.autoApprovePermissions === false
-              ? {
-                  type: "workspaceWrite",
-                  writableRoots: [],
-                  networkAccess: true,
-                  excludeTmpdirEnvVar: false,
-                  excludeSlashTmp: false,
-                }
-              : { type: "dangerFullAccess" },
-          approvalPolicy:
-            this.storedOptions.autoApprovePermissions === false ? "on-request" : "never",
-        };
+        this.modeKind = "default";
         this.note("Default mode restored.");
         return true;
       case "model":
@@ -406,6 +441,9 @@ export class CodexConnectionManager {
     this.axonEvents = [];
     this.storedOptions = {};
     this.appServerInitialized = false;
+    this.turnOverrides = {};
+    this.modeKind = null;
+    this.threadSettings = {};
     for (const [, pending] of this.pendingApprovals) {
       pending.resolve(false);
     }
