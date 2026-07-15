@@ -66,4 +66,21 @@ describe("CodexAxonTransport", () => {
       { method: "item/commandExecution/requestApproval", id: 2, params: {} },
     ]);
   });
+
+  // Pins current behavior: an answer replayed before its request resolves
+  // nothing, so the request is flushed as unanswered and the connection will
+  // answer it again. Axon sequences are monotonic, so this should only occur
+  // with out-of-order historical writes.
+  it("flushes a replayed request whose answer arrived earlier in the stream", async () => {
+    const ctrl = createControllableStream(true);
+    const { axon } = createMockAxon(ctrl);
+    const transport = new CodexAxonTransport(axon as never, { replayTargetSequence: 2 });
+    await transport.connect();
+    ctrl.push(makeUserEvent("response", { id: 1, result: {} }, 1));
+    ctrl.push(makeAgentEvent("item/tool/call", { method: "item/tool/call", id: 1 }, 2));
+    ctrl.end();
+    const frames = [];
+    for await (const frame of transport.readMessages()) frames.push(frame);
+    expect(frames).toEqual([{ method: "item/tool/call", id: 1 }]);
+  });
 });

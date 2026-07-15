@@ -81,6 +81,40 @@ describe("ACPAxonConnection", () => {
     });
   });
 
+  describe("source / setSource()", () => {
+    it("defaults to undefined (stream supplies the built-in default)", () => {
+      const ctrl = createControllableStream();
+      const { axon } = createMockAxon(ctrl);
+
+      const conn = new ACPAxonConnection(axon as never, { id: "dbx-test" } as never);
+      expect(conn.source).toBeUndefined();
+      conn.disconnect();
+    });
+
+    it("reflects the value passed via options", () => {
+      const ctrl = createControllableStream();
+      const { axon } = createMockAxon(ctrl);
+
+      const conn = new ACPAxonConnection(axon as never, { id: "dbx-test" } as never, {
+        source: "from-options",
+      });
+      expect(conn.source).toBe("from-options");
+      conn.disconnect();
+    });
+
+    it("updates the current source via setSource()", () => {
+      const ctrl = createControllableStream();
+      const { axon } = createMockAxon(ctrl);
+
+      const conn = new ACPAxonConnection(axon as never, { id: "dbx-test" } as never);
+      conn.setSource("my-client");
+      expect(conn.source).toBe("my-client");
+      conn.setSource(undefined);
+      expect(conn.source).toBeUndefined();
+      conn.disconnect();
+    });
+  });
+
   describe("default permission handler", () => {
     it("prefers allow_always when available", async () => {
       const ctrl = createControllableStream();

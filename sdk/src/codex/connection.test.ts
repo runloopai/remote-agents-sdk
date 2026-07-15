@@ -301,4 +301,144 @@ describe("CodexAxonConnection", () => {
       expect.objectContaining<Partial<ConnectionStateError>>({ code: "terminated" }),
     );
   });
+
+  it("rejects a timed-out thread start without an unhandled rejection", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const { conn } = setup({ requestTimeoutMs: 10 });
+      await conn.connect();
+      await expect(conn.startThread()).rejects.toThrow("Request timeout: thread/start");
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  it("keeps frames buffered before a fatal broker error drainable", async () => {
+    const onError = vi.fn();
+    const { ctrl, conn } = setup({ onError });
+    await conn.connect();
+    ctrl.push(makeAgentEvent("turn/started", { method: "turn/started", params: {} }));
+    ctrl.push(makeAgentEvent("turn/completed", { method: "turn/completed", params: {} }));
+    ctrl.push(makeSystemEventWithRawPayload("broker.error", "boom", 3));
+    await tick();
+    expect(onError).toHaveBeenCalledWith(expect.any(SystemError));
+    const frames = [];
+    for await (const frame of conn.receiveAgentEvents()) frames.push(frame);
+    expect(frames.map((frame) => frame.method)).toEqual(["turn/started", "turn/completed"]);
+  });
+
+  it("supports a connect → disconnect → connect cycle on the same instance", async () => {
+    const ctrls = [createControllableStream(true), createControllableStream(true)];
+    let active = 0;
+    const axon = {
+      id: "axon",
+      publish: vi.fn().mockImplementation(async (event: { payload: string }) => {
+        const frame = JSON.parse(event.payload);
+        ctrls[active]?.push(
+          makeAgentEvent("response", {
+            id: frame.id,
+            result: frame.method === "thread/start" ? { thread: { id: "thr-1" } } : {},
+          }),
+        );
+      }),
+      subscribeSse: vi.fn().mockImplementation(async () => ctrls[active]?.stream),
+    };
+    const conn = new CodexAxonConnection(axon as never, { id: "dbx" } as never, { replay: false });
+    await conn.connect();
+    await conn.send("first");
+    await conn.disconnect();
+    ctrls[0]?.end();
+    expect(conn.isDisconnected).toBe(true);
+    active = 1;
+    await conn.connect();
+    expect(conn.isConnected).toBe(true);
+    await conn.send("second");
+    const methods = axon.publish.mock.calls.map(([event]) => JSON.parse(event.payload).method);
+    expect(methods.filter((method) => method === "turn/start")).toHaveLength(2);
+  });
+
+  it("rejects in-flight requests after the single reconnect attempt also fails", async () => {
+    const createFailableStream = () => {
+      let failWith: ((error: Error) => void) | undefined;
+      return {
+        stream: {
+          controller: { abort: vi.fn() },
+          [Symbol.asyncIterator]() {
+            return {
+              next: () =>
+                new Promise<never>((_, reject) => {
+                  failWith = reject;
+                }),
+            };
+          },
+        },
+        fail: (error: Error) => failWith?.(error),
+      };
+    };
+    const first = createFailableStream();
+    const second = createFailableStream();
+    const axon = {
+      id: "axon",
+      publish: vi.fn(),
+      subscribeSse: vi
+        .fn()
+        .mockResolvedValueOnce(first.stream)
+        .mockResolvedValueOnce(second.stream),
+    };
+    const conn = new CodexAxonConnection(axon as never, { id: "dbx" } as never, {
+      replay: false,
+      onError: vi.fn(),
+    });
+    await conn.connect();
+    const observed = conn.readConfig().then(
+      () => undefined,
+      (error: Error) => error,
+    );
+    first.fail(new Error("blip 1"));
+    await tick();
+    second.fail(new Error("blip 2"));
+    await tick();
+    expect(axon.subscribeSse).toHaveBeenCalledTimes(2);
+    expect(await observed).toMatchObject({ message: "blip 2" });
+  });
+
+  it("answers with a JSON-RPC error when an approval handler throws", async () => {
+    const { ctrl, mock, conn } = setup();
+    conn.onApprovalRequest("execCommandApproval", async () => {
+      throw new Error("handler exploded");
+    });
+    await conn.connect();
+    ctrl.push(
+      makeAgentEvent("execCommandApproval", { method: "execCommandApproval", id: 3, params: {} }),
+    );
+    await tick();
+    expect(JSON.parse(mock.published[0]?.payload ?? "null")).toEqual({
+      id: 3,
+      error: { code: -32000, message: "handler exploded" },
+    });
+  });
+
+  it("rejects requests with a typed error preserving the JSON-RPC code", async () => {
+    const { ctrl, mock, conn } = setup();
+    mock.axon.publish.mockImplementation(async (event) => {
+      const frame = JSON.parse(event.payload);
+      ctrl.push(
+        makeAgentEvent("response", {
+          id: frame.id,
+          error: { code: -32602, message: "bad params", data: { field: "threadId" } },
+        }),
+      );
+    });
+    await conn.connect();
+    await expect(conn.resumeThread("thread-1")).rejects.toMatchObject({
+      name: "CodexRequestError",
+      code: -32602,
+      message: "bad params",
+      data: { field: "threadId" },
+    });
+  });
 });

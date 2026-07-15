@@ -141,7 +141,21 @@ export interface AxonTransportOptions {
    * yielded. After replay ends, only unresolved control requests are yielded.
    */
   replayTargetSequence?: number;
+
+  /**
+   * The `source` string attached to every published Axon event, or a
+   * resolver invoked at publish time to obtain it. Use the resolver form to
+   * change the `source` between messages without recreating the transport
+   * (e.g. `() => this.currentSource`). When omitted, or when the resolver
+   * returns `undefined`, the default is used.
+   *
+   * @defaultValue `"claude-sdk-client"`
+   */
+  source?: string | (() => string | undefined);
 }
+
+/** Default `source` used when publishing events from the Claude SDK transport. */
+const DEFAULT_SOURCE = "claude-sdk-client";
 
 /**
  * Transport implementation that communicates with a remote Claude Code
@@ -167,7 +181,10 @@ export class AxonTransport implements Transport {
     };
     this.inner = new AxonFrameTransport(axon, {
       ...options,
-      source: "claude-sdk-client",
+      source: () => {
+        const value = typeof options.source === "function" ? options.source() : options.source;
+        return value ?? DEFAULT_SOURCE;
+      },
       logPrefix: "axon-transport",
       parseFrame,
       resolveEventType: (frame) => {
