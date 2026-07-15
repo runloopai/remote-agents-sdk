@@ -203,4 +203,14 @@ export interface BaseConnectionOptions {
    * @defaultValue `true`
    */
   replay?: boolean;
+
+  /**
+   * The `source` string attached to every event this client publishes to
+   * the Axon API. Use it to identify which client produced a user prompt
+   * (e.g. distinguishing multiple integrations writing to the same channel).
+   *
+   * Defaults to the built-in client identifier (`"claude-sdk-client"` or
+   * `"acp-sdk-client"` depending on the connection type).
+   */
+  source?: string;
 }

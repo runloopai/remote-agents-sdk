@@ -201,6 +201,14 @@ export class ClaudeAxonConnection {
   /** Optional teardown callback invoked by {@link disconnect}. */
   private disconnectFn: (() => void | Promise<void>) | undefined;
 
+  /**
+   * The `source` attached to outbound events. Read by the transport at
+   * publish time, so mutating it via {@link setSource} affects subsequent
+   * messages without recreating the transport. `undefined` means the
+   * transport's built-in default is used.
+   */
+  private currentSource: string | undefined;
+
   private messageQueue: AsyncMessageQueue<SDKMessage>;
 
   /** Whether the background read loop has been started. */
@@ -270,6 +278,7 @@ export class ClaudeAxonConnection {
     this.options = options ?? {};
     this.handleError = options?.onError ?? makeDefaultOnError("ClaudeAxonConnection");
     this.disconnectFn = options?.onDisconnect;
+    this.currentSource = options?.source;
     this.log = makeLogger("claude-sdk", options?.verbose ?? false);
     this.axonEventListeners = new ListenerSet<AxonEventListener>(this.handleError);
     this.timelineEventListeners = new ListenerSet<TimelineEventListener<ClaudeTimelineEvent>>(
@@ -329,6 +338,7 @@ export class ClaudeAxonConnection {
         },
         afterSequence: this.options.afterSequence,
         replayTargetSequence,
+        source: () => this.currentSource,
       });
     }
 
@@ -621,9 +631,8 @@ export class ClaudeAxonConnection {
    * @returns The next SDK message, or `null` if no more messages will arrive.
    */
   private nextMessage(): Promise<SDKMessage | null> {
-    if (this.closed) {
-      return Promise.resolve(null);
-    }
+    // Delegate closed-state handling to the queue so messages buffered before
+    // a fatal error or stream end remain drainable; disconnect() clears them.
     return this.messageQueue.next();
   }
 
@@ -809,6 +818,30 @@ export class ClaudeAxonConnection {
    * await conn.send("What files are in this directory?");
    * ```
    */
+  /**
+   * The `source` string currently attached to events published by this
+   * connection (e.g. user prompts via {@link send}). `undefined` means the
+   * built-in default (`"claude-sdk-client"`) is used.
+   */
+  get source(): string | undefined {
+    return this.currentSource;
+  }
+
+  /**
+   * Sets the `source` string attached to subsequently published events.
+   *
+   * Takes effect immediately and applies to every later message published
+   * through the transport (such as {@link send}) until changed again — set
+   * it before a message to control that message's `source`. Pass `undefined`
+   * to restore the built-in default. (The lower-level {@link publish} method
+   * is unaffected; it sets `source` directly from its params.)
+   *
+   * @param source - The source identifier, or `undefined` for the default.
+   */
+  setSource(source: string | undefined): void {
+    this.currentSource = source;
+  }
+
   async send(prompt: string | SDKUserMessage): Promise<void> {
     if (this.fatal) {
       throw new ConnectionStateError(

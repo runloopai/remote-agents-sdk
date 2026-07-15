@@ -45,15 +45,13 @@ See [`../blueprint`](../blueprint/) for details. You only need to run it once pe
 
 ## Running
 
-You need two terminals:
-
 ```bash
-# Terminal 1: Express server (port 3003)
 bun run dev
-
-# Terminal 2: Vite dev server (port 5176)
-bun run dev:client
 ```
+
+This starts both processes in one terminal: the Express server (port 3003) and the Vite dev server (port 5176), with prefixed output. Stopping it (Ctrl-C) shuts down both.
+
+To run them individually, use `bun run dev:server` and `bun run dev:client` in separate terminals.
 
 Open http://localhost:5176. The Vite dev server proxies `/api/*` and `/ws` to the Express backend.
 

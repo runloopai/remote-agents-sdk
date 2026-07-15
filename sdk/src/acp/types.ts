@@ -54,6 +54,17 @@ export interface AxonStreamOptions {
    * enqueued. After replay ends, only unresolved requests are enqueued.
    */
   replayTargetSequence?: number;
+
+  /**
+   * The `source` string attached to every published Axon event, or a
+   * resolver invoked at publish time to obtain it. Use the resolver form to
+   * change the `source` between messages without recreating the stream
+   * (e.g. `() => this.currentSource`). When omitted, or when the resolver
+   * returns `undefined`, the default is used.
+   *
+   * @defaultValue `"acp-sdk-client"`
+   */
+  source?: string | (() => string | undefined);
 }
 
 /**

@@ -13,7 +13,7 @@ export interface AxonFrameTransportOptions<TFrame> {
   onAxonEvent?: (event: AxonEventView) => void;
   afterSequence?: number;
   replayTargetSequence?: number;
-  source: string;
+  source: string | (() => string);
   logPrefix: string;
   parseFrame(payload: string): TFrame | undefined;
   resolveEventType(frame: TFrame | undefined, raw: string): string;
@@ -75,7 +75,8 @@ export class AxonFrameTransport<TFrame> {
       event_type: this.options.resolveEventType(frame, raw),
       origin: "USER_EVENT",
       payload: raw,
-      source: this.options.source,
+      source:
+        typeof this.options.source === "function" ? this.options.source() : this.options.source,
     });
   }
 
