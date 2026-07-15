@@ -31,6 +31,34 @@ export type InputItem = UserInput;
 export type ApprovalMethod = CodexApprovalRequestMethod;
 export type ApprovalRequest = Extract<ServerRequest, { method: ApprovalMethod }>;
 export type ApprovalHandler = (request: ApprovalRequest) => Promise<unknown> | unknown;
+/**
+ * JSON-RPC error returned by the Codex app-server for a client request.
+ * Preserves the wire `code` and `data` alongside the message.
+ * @category Errors
+ */
+export class CodexRequestError extends Error {
+  constructor(
+    message: string,
+    readonly code?: number,
+    readonly data?: unknown,
+  ) {
+    super(message);
+    this.name = "CodexRequestError";
+  }
+}
+
+function toRequestError(error: unknown): CodexRequestError {
+  if (typeof error === "object" && error !== null) {
+    const { code, message, data } = error as { code?: unknown; message?: unknown; data?: unknown };
+    return new CodexRequestError(
+      typeof message === "string" ? message : JSON.stringify(error),
+      typeof code === "number" ? code : undefined,
+      data,
+    );
+  }
+  return new CodexRequestError(String(error));
+}
+
 /** Options for a native Codex connection. @category Configuration */
 export interface CodexAxonConnectionOptions extends BaseConnectionOptions {
   threadStartParams?: ThreadStartParams;
@@ -219,7 +247,7 @@ export class CodexAxonConnection {
     this.captureThreadStarted(frame);
     if (!frame.method && frame.id != null) {
       frame.error
-        ? this.pending.reject(frame.id, new Error(JSON.stringify(frame.error)))
+        ? this.pending.reject(frame.id, toRequestError(frame.error))
         : this.pending.resolve(frame.id, frame.result);
       return;
     }
@@ -362,6 +390,9 @@ export class CodexAxonConnection {
         this.options.requestTimeoutMs ?? 60_000,
       );
     });
+    // Only awaited when the response lacks a thread id; pre-observe it so a
+    // timeout firing while request() is still pending is never unhandled.
+    notification.catch(() => undefined);
     try {
       const result = (await this.request("thread/start", params)) as
         | ThreadStartResponse
@@ -415,7 +446,8 @@ export class CodexAxonConnection {
     };
   }
   private nextMessage(): Promise<CodexFrame | null> {
-    if (this.closed) return Promise.resolve(null);
+    // Delegate closed-state handling to the queue so frames buffered before a
+    // fatal error or stream end remain drainable; disconnect() clears them.
     return this.messageQueue.next();
   }
   /** Yields agent notifications until the connection closes. */

@@ -626,14 +626,12 @@ export class ClaudeAxonConnection {
   /**
    * Returns the next buffered SDK message, or waits for one to arrive.
    * Resolves with `null` when the read loop has ended or the connection
-   * has been closed.
+   * has been closed. Messages buffered before a fatal error or stream end
+   * remain drainable; disconnect() clears them via the queue.
    *
    * @returns The next SDK message, or `null` if no more messages will arrive.
    */
   private nextMessage(): Promise<SDKMessage | null> {
-    if (this.closed) {
-      return Promise.resolve(null);
-    }
     return this.messageQueue.next();
   }
 

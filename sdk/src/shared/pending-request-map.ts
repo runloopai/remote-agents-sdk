@@ -10,6 +10,9 @@ export class PendingRequestMap<Id, Value> {
   >();
 
   create(id: Id, timeoutMs: number, timeoutMessage: string): Promise<Value> {
+    // Silently overwriting would orphan the old entry's promise and leave its
+    // timer racing against the new entry's — surface the caller bug instead.
+    if (this.pending.has(id)) throw new Error(`Duplicate pending request id: ${String(id)}`);
     return new Promise<Value>((resolve, reject) => {
       const timer = setTimeout(() => {
         if (this.pending.delete(id)) reject(new Error(timeoutMessage));
