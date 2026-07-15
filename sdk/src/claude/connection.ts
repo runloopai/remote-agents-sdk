@@ -11,15 +11,12 @@ import type {
   PublishResultView,
 } from "@runloop/api-client/resources/axons";
 import type { Axon, Devbox } from "@runloop/api-client/sdk";
-import { AsyncMessageQueue } from "../shared/async-message-queue.js";
 import { resolveReplayTarget } from "../shared/connect-guards.js";
-import { runConnectionReadLoop } from "../shared/connection-read-loop.js";
 import { ConnectionStateError } from "../shared/errors/connection-state-error.js";
 import { SystemError } from "../shared/errors/system-error.js";
 import { runDisconnectHook } from "../shared/lifecycle.js";
 import { ListenerSet } from "../shared/listener-set.js";
 import { makeDefaultOnError, makeLogger } from "../shared/logging.js";
-import { PendingRequestMap } from "../shared/pending-request-map.js";
 import { timelineEventGenerator } from "../shared/timeline-generator.js";
 import type {
   AxonEventListener,
@@ -98,6 +95,13 @@ function nextRequestId(counter: number): string {
  * Tracks a single in-flight control request so its promise can be
  * resolved or rejected when the matching response arrives.
  */
+interface PendingControlRequest {
+  /** Settles the promise with the response payload on success. */
+  resolve: (value: WireData) => void;
+  /** Rejects the promise on error or timeout. */
+  reject: (reason: Error) => void;
+}
+
 // ---------------------------------------------------------------------------
 // Client options
 // ---------------------------------------------------------------------------
@@ -209,7 +213,14 @@ export class ClaudeAxonConnection {
    */
   private currentSource: string | undefined;
 
-  private messageQueue: AsyncMessageQueue<SDKMessage>;
+  private static readonly MESSAGE_QUEUE_HIGH_WATER_MARK = 1000;
+
+  /** Buffer of SDK messages that arrived before a consumer called {@link nextMessage}. */
+  private messageQueue: SDKMessage[] = [];
+  private messageQueueWarned = false;
+
+  /** Promise resolvers waiting for the next SDK message. */
+  private messageWaiters: Array<(msg: SDKMessage | null) => void> = [];
 
   /** Whether the background read loop has been started. */
   private readLoopRunning = false;
@@ -218,12 +229,13 @@ export class ClaudeAxonConnection {
   private handshakeComplete = false;
 
   /** Whether the background read loop has finished (stream ended or errored). */
+  private readLoopDone = false;
 
   /** Monotonically increasing counter used to generate unique control request IDs. */
   private requestCounter = 0;
 
   /** In-flight control requests awaiting a response from the CLI. */
-  private pendingControlRequests = new PendingRequestMap<string, WireData>();
+  private pendingControlRequests = new Map<string, PendingControlRequest>();
 
   /**
    * When true, inbound routing and the read loop should stop. Cleared after a
@@ -284,12 +296,6 @@ export class ClaudeAxonConnection {
     this.timelineEventListeners = new ListenerSet<TimelineEventListener<ClaudeTimelineEvent>>(
       this.handleError,
     );
-    this.messageQueue = new AsyncMessageQueue(1000, (size) =>
-      this.handleError(
-        `[ClaudeAxonConnection] Message queue has ${size} buffered messages. ` +
-          "Ensure you are consuming messages via receiveMessages() or receiveResponse().",
-      ),
-    );
   }
 
   // -----------------------------------------------------------------------
@@ -325,7 +331,7 @@ export class ClaudeAxonConnection {
     }
 
     this.suppressTransportAutoReconnect = false;
-    this.messageQueue.reopen();
+    this.readLoopDone = false;
 
     const replayTargetSequence = await resolveReplayTarget(this.axon, this.options, this.log);
 
@@ -437,12 +443,19 @@ export class ClaudeAxonConnection {
     this.timelineAbortController.abort();
 
     // Unblock any waiters and clear buffered messages
-    this.messageQueue.close();
+    for (const waiter of this.messageWaiters) {
+      waiter(null);
+    }
+    this.messageWaiters.length = 0;
+    this.messageQueue.length = 0;
 
     this.handshakeComplete = false;
 
     // Fail pending control requests
-    this.pendingControlRequests.rejectAll(new Error("Client disconnected"));
+    for (const [, pending] of this.pendingControlRequests) {
+      pending.reject(new Error("Client disconnected"));
+    }
+    this.pendingControlRequests.clear();
 
     if (this.transport) {
       await this.transport.close();
@@ -453,6 +466,7 @@ export class ClaudeAxonConnection {
 
     this.timelineAbortController = new AbortController();
     this.closed = false;
+    this.readLoopDone = false;
   }
 
   // -----------------------------------------------------------------------
@@ -524,33 +538,67 @@ export class ClaudeAxonConnection {
   private startReadLoop(): void {
     if (this.readLoopRunning) return;
     this.readLoopRunning = true;
-    const transport = this.transport;
-    if (!transport) {
-      this.readLoopRunning = false;
-      return;
-    }
-    void runConnectionReadLoop({
-      transport,
-      route: (message) => this.routeMessage(message),
-      isClosed: () => this.closed,
-      isReconnectSuppressed: () => this.suppressTransportAutoReconnect,
-      isStreamAborted: () => this.streamAborted,
-      isCurrent: () => transport === this.transport,
-      onError: this.handleError,
-      onFatal: (error) => {
-        this.fatal = true;
-        this.closed = true;
-        this.pendingControlRequests.rejectAll(error);
-      },
-      onTerminalError: (error) => this.pendingControlRequests.rejectAll(error),
-      onFinished: () => {
+
+    (async () => {
+      const transport = this.transport;
+      if (!transport) {
         this.readLoopRunning = false;
-        this.streamAborted = false;
-        this.timelineAbortController.abort();
-        this.messageQueue.close(false);
-      },
-      log: this.log,
-    });
+        return;
+      }
+
+      let reconnected = false;
+
+      const consumeStream = async (): Promise<"ended" | "error"> => {
+        try {
+          for await (const message of transport.readMessages()) {
+            if (this.closed) return "ended";
+            this.routeMessage(message);
+          }
+          return "ended";
+        } catch (err) {
+          this.log("readLoop", `error: ${err}`);
+          this.handleError(err);
+          if (err instanceof SystemError) {
+            this.fatal = true;
+            this.closed = true;
+          }
+          for (const [, pending] of this.pendingControlRequests) {
+            pending.reject(err instanceof Error ? err : new Error(String(err)));
+          }
+          this.pendingControlRequests.clear();
+          return "error";
+        }
+      };
+
+      const outcome = await consumeStream();
+
+      if (
+        !this.closed &&
+        !this.suppressTransportAutoReconnect &&
+        !this.streamAborted &&
+        !reconnected
+      ) {
+        const label = outcome === "error" ? "error" : "ended unexpectedly";
+        this.log("readLoop", `SSE stream ${label}, reconnecting...`);
+        reconnected = true;
+        try {
+          await transport.reconnect();
+          this.log("readLoop", "reconnected successfully");
+          await consumeStream();
+        } catch (reconnectErr) {
+          this.log("readLoop", `reconnect failed: ${reconnectErr}`);
+        }
+      }
+
+      this.readLoopDone = true;
+      this.readLoopRunning = false;
+      this.streamAborted = false;
+      this.timelineAbortController.abort();
+      for (const waiter of this.messageWaiters) {
+        waiter(null);
+      }
+      this.messageWaiters.length = 0;
+    })();
   }
 
   /**
@@ -579,14 +627,14 @@ export class ClaudeAxonConnection {
     if (msgType === "control_response") {
       const response = message.response ?? {};
       const requestId: string | undefined = response.request_id;
-      if (requestId) {
+      if (requestId && this.pendingControlRequests.has(requestId)) {
+        // biome-ignore lint/style/noNonNullAssertion: guarded by .has() check above
+        const pending = this.pendingControlRequests.get(requestId)!;
+        this.pendingControlRequests.delete(requestId);
         if (response.subtype === "error") {
-          this.pendingControlRequests.reject(
-            requestId,
-            new Error(response.error ?? "Unknown control error"),
-          );
+          pending.reject(new Error(response.error ?? "Unknown control error"));
         } else {
-          this.pendingControlRequests.resolve(requestId, response.response ?? {});
+          pending.resolve(response.response ?? {});
         }
       }
       return;
@@ -620,19 +668,43 @@ export class ClaudeAxonConnection {
       return;
     }
     const sdkMessage = message as SDKMessage;
-    this.messageQueue.push(sdkMessage);
+    if (this.messageWaiters.length > 0) {
+      // biome-ignore lint/style/noNonNullAssertion: guarded by .length > 0 check above
+      const waiter = this.messageWaiters.shift()!;
+      waiter(sdkMessage);
+    } else {
+      this.messageQueue.push(sdkMessage);
+      if (
+        !this.messageQueueWarned &&
+        this.messageQueue.length >= ClaudeAxonConnection.MESSAGE_QUEUE_HIGH_WATER_MARK
+      ) {
+        this.messageQueueWarned = true;
+        this.handleError(
+          `[ClaudeAxonConnection] Message queue has ${this.messageQueue.length} buffered messages. ` +
+            "Ensure you are consuming messages via receiveMessages() or receiveResponse().",
+        );
+      }
+    }
   }
 
   /**
    * Returns the next buffered SDK message, or waits for one to arrive.
    * Resolves with `null` when the read loop has ended or the connection
-   * has been closed. Messages buffered before a fatal error or stream end
-   * remain drainable; disconnect() clears them via the queue.
+   * has been closed.
    *
    * @returns The next SDK message, or `null` if no more messages will arrive.
    */
   private nextMessage(): Promise<SDKMessage | null> {
-    return this.messageQueue.next();
+    if (this.messageQueue.length > 0) {
+      // biome-ignore lint/style/noNonNullAssertion: guarded by .length > 0 check above
+      return Promise.resolve(this.messageQueue.shift()!);
+    }
+    if (this.readLoopDone || this.closed) {
+      return Promise.resolve(null);
+    }
+    return new Promise<SDKMessage | null>((resolve) => {
+      this.messageWaiters.push(resolve);
+    });
   }
 
   // -----------------------------------------------------------------------
@@ -661,22 +733,31 @@ export class ClaudeAxonConnection {
       request,
     };
 
-    const promise = this.pendingControlRequests.create(
-      requestId,
-      timeoutMs,
-      `Control request timeout: ${request.subtype}`,
-    );
+    const promise = new Promise<WireData>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (this.pendingControlRequests.has(requestId)) {
+          this.pendingControlRequests.delete(requestId);
+          reject(new Error(`Control request timeout: ${request.subtype}`));
+        }
+      }, timeoutMs);
+
+      this.pendingControlRequests.set(requestId, {
+        resolve: (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        reject: (reason) => {
+          clearTimeout(timer);
+          reject(reason);
+        },
+      });
+    });
 
     const transport = this.transport;
     if (!transport) {
       throw new ConnectionStateError("not_connected", "Not connected. Call connect() first.");
     }
-    try {
-      await transport.write(JSON.stringify(controlRequest));
-    } catch (error) {
-      this.pendingControlRequests.delete(requestId);
-      throw error;
-    }
+    await transport.write(JSON.stringify(controlRequest));
     return promise;
   }
 
@@ -802,6 +883,22 @@ export class ClaudeAxonConnection {
   // -----------------------------------------------------------------------
 
   /**
+   * Sends a single user message to Claude.
+   *
+   * If given a plain string, it is automatically wrapped into an
+   * `SDKUserMessage` with `role: "user"`. Pass a pre-built
+   * `SDKUserMessage` for full control (e.g. to set `parent_tool_use_id`).
+   *
+   * @param prompt - A string message or a fully formed `SDKUserMessage`.
+   *
+   * @throws {ConnectionStateError} If not connected (`code: "not_connected"`) or after a fatal error (`code: "terminated"`).
+   *
+   * @example
+   * ```ts
+   * await conn.send("What files are in this directory?");
+   * ```
+   */
+  /**
    * The `source` string currently attached to events published by this
    * connection (e.g. user prompts via {@link send}). `undefined` means the
    * built-in default (`"claude-sdk-client"`) is used.
@@ -825,22 +922,6 @@ export class ClaudeAxonConnection {
     this.currentSource = source;
   }
 
-  /**
-   * Sends a single user message to Claude.
-   *
-   * If given a plain string, it is automatically wrapped into an
-   * `SDKUserMessage` with `role: "user"`. Pass a pre-built
-   * `SDKUserMessage` for full control (e.g. to set `parent_tool_use_id`).
-   *
-   * @param prompt - A string message or a fully formed `SDKUserMessage`.
-   *
-   * @throws {ConnectionStateError} If not connected (`code: "not_connected"`) or after a fatal error (`code: "terminated"`).
-   *
-   * @example
-   * ```ts
-   * await conn.send("What files are in this directory?");
-   * ```
-   */
   async send(prompt: string | SDKUserMessage): Promise<void> {
     if (this.fatal) {
       throw new ConnectionStateError(
