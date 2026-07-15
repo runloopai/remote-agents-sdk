@@ -1,21 +1,23 @@
 import { randomUUID } from "node:crypto";
 import type { ClaudeConnectionManager } from "./claude-manager.ts";
 import type { ACPConnectionManager } from "./acp-manager.ts";
+import type { CodexConnectionManager } from "./codex-manager.ts";
 
 export interface AgentEntry {
   id: string;
-  agentType: "claude" | "acp";
+  agentType: "claude" | "acp" | "codex";
   name: string;
   axonId: string;
   devboxId: string;
   createdAt: number;
   claudeManager?: ClaudeConnectionManager;
   acpManager?: ACPConnectionManager;
+  codexManager?: CodexConnectionManager;
 }
 
 export interface AgentListItem {
   id: string;
-  agentType: "claude" | "acp";
+  agentType: "claude" | "acp" | "codex";
   name: string;
   axonId: string;
   devboxId: string;
@@ -57,6 +59,7 @@ export class AgentRegistry {
     if (!entry) return;
     if (entry.claudeManager) await entry.claudeManager.shutdown();
     if (entry.acpManager) await entry.acpManager.shutdown();
+    if (entry.codexManager) await entry.codexManager.shutdown();
     this.agents.delete(id);
   }
 

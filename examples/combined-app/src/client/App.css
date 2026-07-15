@@ -1874,6 +1874,7 @@ html, body, #root {
 .tl-kind-system { background: rgba(210, 153, 34, 0.15); color: var(--warning); }
 .tl-kind-acp { background: rgba(63, 185, 80, 0.15); color: var(--success); }
 .tl-kind-claude { background: rgba(136, 87, 255, 0.15); color: #a78bfa; }
+.tl-kind-codex { background: rgba(240, 246, 252, 0.12); color: #e6edf3; }
 .tl-kind-unknown { background: rgba(139, 148, 158, 0.15); color: var(--text-secondary); }
 .tl-kind-custom { background: rgba(56, 189, 248, 0.15); color: #38bdf8; }
 

@@ -8,6 +8,7 @@ Index for generating code that uses the SDK to connect to Runloop-hosted remote 
 npm install @runloop/remote-agents-sdk @runloop/api-client
 # Claude module only:
 npm install @anthropic-ai/claude-agent-sdk
+# Codex module needs no extra dependency (protocol types are vendored)
 ```
 
 ## Connecting
@@ -25,7 +26,7 @@ https://github.com/runloopai/remote-agents-sdk/blob/main/examples/feature-exampl
 
 ## Implementation Notes
 
-- Call `connect()` before `initialize()`.
+- Call `connect()` before `initialize()` (ACP/Claude; Codex has no initialize step).
 - Use SDK type guards instead of raw Axon payloads.
 - Prefer Agent Gateway for secrets; MCP Gateway for MCP endpoints; Network Policy for egress.
 - Node >= 22 required.

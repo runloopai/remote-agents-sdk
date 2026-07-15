@@ -43,6 +43,7 @@ See [`Dockerfile`](Dockerfile) for the exact contents. At the time of writing it
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) — for the Claude module examples
 - [OpenCode](https://opencode.ai) — for ACP examples using OpenCode
 - [Codex ACP](https://www.npmjs.com/package/@zed-industries/codex-acp) — for ACP examples using Codex
+- [Codex CLI](https://developers.openai.com/codex/cli) — for native Codex module examples (pinned to 0.144.1, matching the SDK's vendored protocol types)
 
 ## Alternatives
 

@@ -4,12 +4,14 @@ SDK Version: 0.4.3
 
 ## Protocol × Feature
 
-| Use Case | ACP | Claude |
-|----------|-----|--------|
-| agent-via-blueprint | pass | pass |
-| elicitation-acp | xfail | N/A |
-| elicitation-claude | N/A | pass |
-| single-prompt | pass | pass |
+| Use Case | ACP | Claude | Codex |
+|----------|-----|--------|-------|
+| agent-via-blueprint | pass | pass | pending |
+| approval-codex | N/A | N/A | pending |
+| elicitation-acp | xfail | N/A | N/A |
+| elicitation-claude | N/A | pass | N/A |
+| single-prompt | pass | pass | pending |
+| thread-resume-codex | N/A | N/A | pending |
 
 ## ACP Agent × Feature
 

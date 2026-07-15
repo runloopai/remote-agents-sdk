@@ -1,6 +1,7 @@
 import { RunloopSDK, type Secret } from "@runloop/api-client";
 import { ACPAxonConnection, PROTOCOL_VERSION } from "@runloop/remote-agents-sdk/acp";
 import { ClaudeAxonConnection } from "@runloop/remote-agents-sdk/claude";
+import { CodexAxonConnection } from "@runloop/remote-agents-sdk/codex";
 import type { AgentConfig, AgentConfigOverride, BrokerMount, UseCase, RunContext } from "./types.js";
 import { SkipError } from "./types.js";
 import { withTimeout } from "./validator.js";
@@ -149,7 +150,32 @@ export async function setup(agent: AgentConfig, useCase: UseCase): Promise<Setup
         agent: mergedAgent,
         acp: conn,
         claude: null,
+        codex: null,
         sessionId: session.sessionId,
+        log,
+        skip: (reason: string) => {
+          throw new SkipError(reason);
+        },
+        cleanup,
+      };
+
+      return { ctx, sdk };
+    }
+
+    if (mergedAgent.protocol === "codex") {
+      const conn = new CodexAxonConnection(axon, devbox);
+
+      log("Connecting (Codex)...");
+      await withTimeout(conn.connect(), SETUP_STEP_TIMEOUT_MS, "Codex connect");
+
+      // No initialize step — the broker performs the app-server handshake itself,
+      // and the first send() (or an explicit startThread()) creates the thread.
+      const ctx: RunContext = {
+        agent: mergedAgent,
+        acp: null,
+        claude: null,
+        codex: conn,
+        sessionId: null,
         log,
         skip: (reason: string) => {
           throw new SkipError(reason);
@@ -172,6 +198,7 @@ export async function setup(agent: AgentConfig, useCase: UseCase): Promise<Setup
       agent: mergedAgent,
       acp: null,
       claude: conn,
+      codex: null,
       sessionId: null,
       log,
       skip: (reason: string) => {
@@ -197,6 +224,9 @@ export async function disconnect(ctx: RunContext): Promise<void> {
   } else if (ctx.claude) {
     ctx.log("Disconnecting Claude...");
     await ctx.claude.disconnect();
+  } else if (ctx.codex) {
+    ctx.log("Disconnecting Codex...");
+    await ctx.codex.disconnect();
   }
 }
 
@@ -229,7 +259,12 @@ async function cleanupAfterSetupError(
  */
 function validateConfig(agent: AgentConfig): void {
   // Ensure broker protocol matches client protocol expectation.
-  const expectedBrokerProtocol = agent.protocol === "acp" ? "acp" : "claude_json";
+  const brokerProtocolByClientProtocol = {
+    acp: "acp",
+    claude: "claude_json",
+    codex: "codex_json",
+  } as const;
+  const expectedBrokerProtocol = brokerProtocolByClientProtocol[agent.protocol];
   if (agent.brokerMount.protocol !== expectedBrokerProtocol) {
     throw new Error(
       `Config error for ${agent.name}: protocol "${agent.protocol}" expects brokerMount.protocol "${expectedBrokerProtocol}", got "${agent.brokerMount.protocol}"`,
@@ -289,7 +324,9 @@ function buildBrokerMount(
   return {
     type: "broker_mount" as const,
     axon_id: axonId,
-    protocol: config.protocol,
+    // The broker accepts protocol "codex_json", but the published
+    // @runloop/api-client mount types don't include it yet.
+    protocol: config.protocol as "acp" | "claude_json",
     ...(config.agentBinary && { agent_binary: config.agentBinary }),
     ...(config.launchArgs && { launch_args: config.launchArgs }),
     ...(config.workingDirectory && { working_directory: config.workingDirectory }),

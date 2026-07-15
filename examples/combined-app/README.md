@@ -2,13 +2,14 @@
 
 > **Alpha — subject to change.** This example uses an SDK in early development. APIs and behavior may change without notice between versions.
 
-A full-stack demo that supports both ACP and Claude Code agents running in Runloop devboxes. An Express backend manages agent connections (one per protocol) and fans out SDK timeline events to a React frontend over a single WebSocket. Multiple agents can run concurrently.
+A full-stack demo that supports ACP, Claude Code, and Codex agents running in Runloop devboxes. An Express backend manages agent connections (one per protocol) and fans out SDK timeline events to a React frontend over a single WebSocket. Multiple agents can run concurrently.
 
 ## Prerequisites
 
 - Node.js 22+
 - A [Runloop](https://runloop.ai) API key
 - An [Anthropic](https://anthropic.com) API key (required for Claude agents)
+- An [OpenAI](https://platform.openai.com) API key (required for Codex agents)
 - The `@runloop/remote-agents-sdk` SDK built locally (`cd ../../sdk && bun run build`)
 
 ## Setup
@@ -27,11 +28,12 @@ Add your keys to `.env`:
 ```
 RUNLOOP_API_KEY=your_runloop_api_key
 ANTHROPIC_API_KEY=your_anthropic_api_key
+OPENAI_API_KEY=your_openai_api_key
 ```
 
 ### Build the shared blueprint (one-time, required)
 
-This example provisions devboxes with `blueprint_name: "axon-agents"` (see [`src/server/acp-manager.ts`](src/server/acp-manager.ts) and [`src/server/claude-manager.ts`](src/server/claude-manager.ts)). That blueprint must exist on your Runloop account before starting an agent from the UI — otherwise `POST /api/start` will fail when creating the devbox.
+This example provisions devboxes with `blueprint_name: "axon-agents"` (see [`src/server/acp-manager.ts`](src/server/acp-manager.ts), [`src/server/claude-manager.ts`](src/server/claude-manager.ts), and [`src/server/codex-manager.ts`](src/server/codex-manager.ts)). That blueprint must exist on your Runloop account before starting an agent from the UI — otherwise `POST /api/start` will fail when creating the devbox. Codex agents require a blueprint built after the Codex CLI was added to the [`Dockerfile`](../blueprint/Dockerfile) — re-run the command below if your `axon-agents` image predates it.
 
 From the monorepo root:
 
@@ -55,8 +57,8 @@ Open http://localhost:5176. The Vite dev server proxies `/api/*` and `/ws` to th
 
 ## How It Works
 
-1. **Start an agent** — the setup card lets you choose ACP or Claude, configure the agent binary / blueprint, and optionally set a system prompt. `POST /api/start` provisions an Axon channel and devbox, then opens the appropriate SDK connection (`ACPAxonConnection` or `ClaudeAxonConnection`).
-2. **Send a prompt** — `POST /api/prompt` dispatches to the active connection's `prompt()` (ACP) or `send()` (Claude) and returns immediately.
+1. **Start an agent** — the setup card lets you choose ACP, Claude, or Codex, configure the agent binary / blueprint, and optionally set a system prompt. `POST /api/start` provisions an Axon channel and devbox, then opens the appropriate SDK connection (`ACPAxonConnection`, `ClaudeAxonConnection`, or `CodexAxonConnection`).
+2. **Send a prompt** — `POST /api/prompt` dispatches to the active connection's `prompt()` (ACP) or `send()` (Claude/Codex) and returns immediately.
 3. **Stream events** — the SDK's `onTimelineEvent` callback fires for every classified event (protocol messages, system turns, unknowns). The server broadcasts each event over WebSocket with an `agentId` tag.
 4. **Render blocks** — the React client filters events by `agentId`, builds incremental turn blocks (`useBlockManager`), and renders them through `AssistantTurn` / `TurnBlocks`.
 
@@ -72,6 +74,7 @@ src/
 │   ├── acp-manager.ts       ACP connection lifecycle
 │   ├── acp-client.ts        ACP Client implementation (permissions, elicitation)
 │   ├── claude-manager.ts    Claude connection lifecycle
+│   ├── codex-manager.ts     Codex connection lifecycle (threads, approvals)
 │   └── agent-registry.ts    Multi-agent bookkeeping
 └── client/
     ├── main.tsx             React entry point
@@ -81,6 +84,7 @@ src/
     │   ├── useAgent.ts      Unified hook (delegates to protocol-specific hooks)
     │   ├── useACPAgent.ts   ACP event handling and state
     │   ├── useClaudeAgent.ts Claude event handling and state
+    │   ├── useCodexAgent.ts Codex event handling and state (items, approvals)
     │   ├── useBlockManager.ts Turn block accumulation
     │   ├── useAgentList.ts  Agent list polling
     │   ├── useAttachments.ts File/image attachment handling

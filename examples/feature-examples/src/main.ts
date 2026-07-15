@@ -55,7 +55,7 @@ Usage: bun run feature-compat [options]
 
 Options:
   --agent <name>       Run only for this agent (default: all)
-  --protocol <proto>   Run only for this protocol: acp, claude (default: all)
+  --protocol <proto>   Run only for this protocol: acp, claude, codex (default: all)
   --use-case <name>    Run only this use case (default: all)
   --parallel <n>       Max concurrent devboxes (default: 5)
   --timeout <ms>       Default timeout per use case, capped at 30000 (default: 10000)
@@ -242,6 +242,9 @@ function buildProtocolFeatureRows(results: RunResult[], useCases: UseCase[]): st
     const claudeResults = results.filter(
       (r) => r.useCase === uc.name && r.protocol === "claude",
     );
+    const codexResults = results.filter(
+      (r) => r.useCase === uc.name && r.protocol === "codex",
+    );
 
     const acpStatus = uc.protocols.includes("acp")
       ? aggregateProtocolStatus(acpResults)
@@ -249,8 +252,11 @@ function buildProtocolFeatureRows(results: RunResult[], useCases: UseCase[]): st
     const claudeStatus = uc.protocols.includes("claude")
       ? aggregateProtocolStatus(claudeResults)
       : "N/A";
+    const codexStatus = uc.protocols.includes("codex")
+      ? aggregateProtocolStatus(codexResults)
+      : "N/A";
 
-    rows += `| ${uc.name} | ${acpStatus} | ${claudeStatus} |\n`;
+    rows += `| ${uc.name} | ${acpStatus} | ${claudeStatus} | ${codexStatus} |\n`;
   }
   return rows.trimEnd();
 }
@@ -480,9 +486,9 @@ async function main(): Promise<void> {
   }
 
   if (args.protocol) {
-    if (args.protocol !== "acp" && args.protocol !== "claude") {
+    if (args.protocol !== "acp" && args.protocol !== "claude" && args.protocol !== "codex") {
       console.error(`Unknown protocol: ${args.protocol}`);
-      console.error("Available: acp, claude");
+      console.error("Available: acp, claude, codex");
       process.exit(1);
     }
     filteredAgents = filteredAgents.filter((a) => a.protocol === args.protocol);

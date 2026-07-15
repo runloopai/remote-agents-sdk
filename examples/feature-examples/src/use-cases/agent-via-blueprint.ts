@@ -31,6 +31,13 @@ const BLUEPRINT_OVERRIDES: Record<string, AgentConfigOverride> = {
       workingDirectory: "/home/user",
     },
   },
+  codex: {
+    install: { kind: "blueprint", blueprint: "axon-agents" },
+    brokerMount: {
+      agentBinary: "/home/user/.local/bin/codex",
+      workingDirectory: "/home/user",
+    },
+  },
   "claude-code": {
     install: { kind: "blueprint", blueprint: "axon-agents" },
     brokerMount: {
@@ -43,7 +50,7 @@ const BLUEPRINT_OVERRIDES: Record<string, AgentConfigOverride> = {
 export default {
   name: "agent-via-blueprint",
   description: "Use pre-built blueprint with agents baked in",
-  protocols: ["acp", "claude"],
+  protocols: ["acp", "claude", "codex"],
   timeoutMs: 30_000,
 
   provisionOverridesByAgent: BLUEPRINT_OVERRIDES,

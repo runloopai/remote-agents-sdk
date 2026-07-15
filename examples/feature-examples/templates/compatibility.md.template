@@ -4,8 +4,8 @@ SDK Version: {{sdkVersion}}
 
 ## Protocol × Feature
 
-| Use Case | ACP | Claude |
-|----------|-----|--------|
+| Use Case | ACP | Claude | Codex |
+|----------|-----|--------|-------|
 {{protocolFeatureRows}}
 
 ## ACP Agent × Feature

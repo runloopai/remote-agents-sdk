@@ -15,6 +15,7 @@ import { AgentSidebar } from "./components/AgentSidebar.js";
 import { ControlsBar } from "./components/ControlsBar.js";
 import { AssistantTurn } from "./components/AssistantTurn.js";
 import { AttachmentBar } from "./components/AttachmentBar.js";
+import { ApprovalPrompt } from "./components/ApprovalPrompt.js";
 import { ElicitationForm } from "./components/ElicitationForm.js";
 import { PermissionDialog } from "./components/PermissionDialog.js";
 import { ControlRequestPrompt } from "./components/ControlRequestPrompt.js";
@@ -234,12 +235,19 @@ export default function App() {
           autoApprovePermissions: startAutoApprove,
           ...sharedConfig,
         }
-      : {
-          blueprintName: blueprintName || undefined,
-          model: model || undefined,
-          dangerouslySkipPermissions: startAutoApprove,
-          ...sharedConfig,
-        };
+      : selectedAgentType === "codex"
+        ? {
+            blueprintName: blueprintName || undefined,
+            model: model || undefined,
+            autoApprovePermissions: startAutoApprove,
+            ...sharedConfig,
+          }
+        : {
+            blueprintName: blueprintName || undefined,
+            model: model || undefined,
+            dangerouslySkipPermissions: startAutoApprove,
+            ...sharedConfig,
+          };
 
     try {
       const resp = await api<{ agentId: string; agentType: AgentType; [key: string]: unknown }>(
@@ -255,7 +263,9 @@ export default function App() {
         agentType: resp.agentType,
         name: selectedAgentType === "claude"
           ? (blueprintName || "Claude Agent")
-          : (agentBinary || "ACP Agent"),
+          : selectedAgentType === "codex"
+            ? (blueprintName || "Codex Agent")
+            : (agentBinary || "ACP Agent"),
         axonId: resp.axonId as string,
         devboxId: resp.devboxId as string,
         createdAt: Date.now(),
@@ -415,7 +425,11 @@ export default function App() {
 
   const showChatView = selectedAgentId && !showSetup && selectedEntry;
 
-  const agentLabel = agent.agentType === "claude" ? "Claude Code" : "ACP Agent";
+  const agentLabel = agent.agentType === "claude"
+    ? "Claude Code"
+    : agent.agentType === "codex"
+      ? "Codex"
+      : "ACP Agent";
 
   // Derive devbox status from the last devbox_lifecycle system event in messages
   const lastDevboxEvent = [...agent.messages].reverse().find(
@@ -495,6 +509,12 @@ export default function App() {
                 </div>
               )}
 
+              {agent.agentType === "codex" && agent.threadId && (
+                <div className="controls-bar">
+                  <span className="config-label">Thread: {agent.threadId}</span>
+                </div>
+              )}
+
               <div className="chat-area" ref={chatAreaRef}>
                 {agent.messages.length === 0 && agent.currentTurnBlocks.length === 0 && !agent.isAgentTurn && agent.connectionPhase === "ready" && (
                   <div className="empty-state">Send a message to start chatting</div>
@@ -539,6 +559,13 @@ export default function App() {
                   <ControlRequestPrompt
                     request={agent.pendingControlRequest}
                     onRespond={agent.sendControlResponse}
+                  />
+                )}
+
+                {agent.agentType === "codex" && agent.pendingApproval && (
+                  <ApprovalPrompt
+                    approval={agent.pendingApproval}
+                    onRespond={agent.respondToApproval}
                   />
                 )}
 

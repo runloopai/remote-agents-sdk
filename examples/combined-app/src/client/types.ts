@@ -18,6 +18,7 @@ import type {
 } from "@runloop/remote-agents-sdk/acp";
 import type { ACPTimelineEvent, AxonEventView } from "@runloop/remote-agents-sdk/acp";
 import type { ClaudeTimelineEvent, SDKControlRequest } from "@runloop/remote-agents-sdk/claude";
+import type { ApprovalRequest, CodexTimelineEvent } from "@runloop/remote-agents-sdk/codex";
 
 export type {
   AgentCapabilities,
@@ -41,10 +42,11 @@ export type {
 } from "@runloop/remote-agents-sdk/acp";
 export type { ACPTimelineEvent, AxonEventView } from "@runloop/remote-agents-sdk/acp";
 export type { ClaudeTimelineEvent } from "@runloop/remote-agents-sdk/claude";
+export type { CodexTimelineEvent } from "@runloop/remote-agents-sdk/codex";
 
-export type TimelineEvent = ACPTimelineEvent | ClaudeTimelineEvent;
+export type TimelineEvent = ACPTimelineEvent | ClaudeTimelineEvent | CodexTimelineEvent;
 
-export type AgentType = "claude" | "acp";
+export type AgentType = "claude" | "acp" | "codex";
 
 export type ConnectionPhase = "idle" | "connecting" | "ready" | "error";
 
@@ -183,6 +185,13 @@ export interface ACPInitExtensions {
   authMethods: unknown[];
 }
 
+export interface CodexInitExtensions {
+  protocol: "codex";
+  threadId: string | null;
+  modelProvider: string | null;
+  cwd: string | null;
+}
+
 export interface SystemInitBlock {
   type: "system_init";
   id: string;
@@ -190,7 +199,7 @@ export interface SystemInitBlock {
   agentVersion: string | null;
   model: string | null;
   commands: string[];
-  extensions: ClaudeInitExtensions | ACPInitExtensions | null;
+  extensions: ClaudeInitExtensions | ACPInitExtensions | CodexInitExtensions | null;
   extra: Record<string, unknown>;
 }
 
@@ -320,6 +329,15 @@ export interface PendingPermission {
   toolCallId: string;
   rawInput?: unknown;
   options: PermissionOption[];
+}
+
+// --- Codex-specific: approval request ---
+
+export interface PendingApproval {
+  requestId: string;
+  method: string;
+  summary: string;
+  rawRequest: ApprovalRequest;
 }
 
 // --- ACP-specific: elicitation ---
@@ -453,8 +471,15 @@ export interface ACPAgentState extends SharedAgentState {
   refreshSessions: () => Promise<void>;
 }
 
+export interface CodexAgentState extends SharedAgentState {
+  agentType: "codex";
+  threadId: string | null;
+  pendingApproval: PendingApproval | null;
+  respondToApproval: (requestId: string, approve: boolean) => Promise<void>;
+}
+
 export interface IdleAgentState extends SharedAgentState {
   agentType: null;
 }
 
-export type UseAgentReturn = ClaudeAgentState | ACPAgentState | IdleAgentState;
+export type UseAgentReturn = ClaudeAgentState | ACPAgentState | CodexAgentState | IdleAgentState;

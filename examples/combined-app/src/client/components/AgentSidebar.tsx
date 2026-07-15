@@ -42,7 +42,7 @@ export function AgentSidebar({
           >
             <div className="agent-sidebar-item-top">
               <span className="agent-sidebar-type-badge">
-                {agent.agentType === "claude" ? "C" : "A"}
+                {agent.agentType === "claude" ? "C" : agent.agentType === "codex" ? "X" : "A"}
               </span>
               <span className="agent-sidebar-item-name">{agent.name}</span>
               <button

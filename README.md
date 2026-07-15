@@ -295,7 +295,7 @@ examples/
   acp-cli/                → Interactive ACP REPL
   claude-hello-world/     → Minimal Claude single-prompt script
   claude-cli/             → Interactive Claude REPL
-  combined-app/           → Full-stack combined demo (Claude + ACP, Express + React)
+  combined-app/           → Full-stack combined demo (Claude + Codex + ACP, Express + React)
   feature-examples/       → Runnable SDK recipes (single-prompt, elicitation, etc.)
 ```
 
