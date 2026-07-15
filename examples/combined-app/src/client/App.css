@@ -3150,6 +3150,14 @@ html, body, #root {
   line-height: 1.5;
 }
 
+.user-input-question {
+  margin-bottom: 16px;
+}
+
+.user-input-question .permission-actions {
+  margin-bottom: 8px;
+}
+
 .elicitation-title {
   font-size: 12px;
   font-weight: 600;

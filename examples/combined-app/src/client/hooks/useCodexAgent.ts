@@ -17,6 +17,7 @@ import type {
   ChatItem,
   UsageState,
   PendingApproval,
+  PendingUserInput,
   AxonEventView,
   ToolCallBlock,
   CodexInitExtensions,
@@ -45,10 +46,12 @@ export interface UseCodexAgentReturn {
   timelineEvents: CodexTimelineEvent[];
   autoApprovePermissions: boolean;
   pendingApproval: PendingApproval | null;
+  pendingUserInput: PendingUserInput | null;
   sendMessage: (text: string, content?: Array<{ type: string; [key: string]: unknown }>) => Promise<void>;
   cancel: () => Promise<void>;
   setAutoApprovePermissions: (enabled: boolean) => Promise<void>;
   respondToApproval: (requestId: string, approve: boolean) => Promise<void>;
+  respondToUserInput: (requestId: string, answers: Record<string, string[]>) => Promise<void>;
   shutdown: () => Promise<void>;
 }
 
@@ -65,6 +68,7 @@ interface CodexState {
   axonId: string | null;
   runloopUrl: string | null;
   pendingApproval: PendingApproval | null;
+  pendingUserInput: PendingUserInput | null;
   autoApprovePermissions: boolean;
   axonEvents: AxonEventView[];
   timelineEvents: CodexTimelineEvent[];
@@ -83,6 +87,7 @@ const INITIAL_CODEX_STATE: CodexState = {
   axonId: null,
   runloopUrl: null,
   pendingApproval: null,
+  pendingUserInput: null,
   autoApprovePermissions: true,
   axonEvents: [],
   timelineEvents: [],
@@ -475,6 +480,16 @@ export function useCodexAgent(agentId: string | null): UseCodexAgentReturn {
     } } });
   }
 
+  function handleUserInputRequest(
+    requestId: string,
+    request: Extract<ApprovalRequest, { method: "item/tool/requestUserInput" }>,
+  ): void {
+    dispatch({ type: "SET", patch: { pendingUserInput: {
+      requestId,
+      questions: request.params.questions,
+    } } });
+  }
+
   useEffect(() => {
     resetAllState();
 
@@ -514,6 +529,8 @@ export function useCodexAgent(agentId: string | null): UseCodexAgentReturn {
 
       if (parsed.type === "approval_request") {
         handleApprovalRequest(parsed.requestId, parsed.request);
+      } else if (parsed.type === "user_input_request") {
+        handleUserInputRequest(parsed.requestId, parsed.request);
       } else if (parsed.type === "turn_error") {
         finalizeTurn();
         dispatch({ type: "SET", patch: { error: parsed.error } });
@@ -579,6 +596,14 @@ export function useCodexAgent(agentId: string | null): UseCodexAgentReturn {
     }
   }, [agentId]);
 
+  const respondToUserInput = useCallback(async (requestId: string, answers: Record<string, string[]>) => {
+    try {
+      await api("/api/user-input-response", { agentId, requestId, answers });
+    } finally {
+      dispatch({ type: "SET", patch: { pendingUserInput: null } });
+    }
+  }, [agentId]);
+
   const shutdown = useCallback(async () => {
     try { await api("/api/shutdown", { agentId }); } catch { /* ignore */ }
     wsRef.current?.close();
@@ -605,10 +630,12 @@ export function useCodexAgent(agentId: string | null): UseCodexAgentReturn {
     timelineEvents: s.timelineEvents,
     autoApprovePermissions: s.autoApprovePermissions,
     pendingApproval: s.pendingApproval,
+    pendingUserInput: s.pendingUserInput,
     sendMessage,
     cancel,
     setAutoApprovePermissions,
     respondToApproval,
+    respondToUserInput,
     shutdown,
   };
 }

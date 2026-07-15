@@ -238,6 +238,26 @@ describe("CodexAxonConnection", () => {
     expect(JSON.parse(mock.published[0]?.payload ?? "null")).toEqual({ id: 12, result: expected });
   });
 
+  it("round-trips a requestUserInput handler's answers", async () => {
+    const { ctrl, mock, conn } = setup();
+    conn.onApprovalRequest("item/tool/requestUserInput", async () => ({
+      answers: { topic: { answers: ["Build something"] } },
+    }));
+    await conn.connect();
+    ctrl.push(
+      makeAgentEvent("item/tool/requestUserInput", {
+        method: "item/tool/requestUserInput",
+        id: 3,
+        params: { questions: [{ id: "topic" }] },
+      }),
+    );
+    await tick();
+    expect(JSON.parse(mock.published[0]?.payload ?? "null")).toEqual({
+      id: 3,
+      result: { answers: { topic: { answers: ["Build something"] } } },
+    });
+  });
+
   it("answers unsupported server requests with a JSON-RPC error", async () => {
     const { ctrl, mock, conn } = setup();
     await conn.connect();

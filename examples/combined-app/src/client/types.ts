@@ -340,6 +340,27 @@ export interface PendingApproval {
   rawRequest: ApprovalRequest;
 }
 
+// --- Codex-specific: question tool (item/tool/requestUserInput) ---
+
+export interface UserInputOption {
+  label: string;
+  description: string;
+}
+
+export interface UserInputQuestion {
+  id: string;
+  header: string;
+  question: string;
+  isOther: boolean;
+  isSecret: boolean;
+  options: UserInputOption[] | null;
+}
+
+export interface PendingUserInput {
+  requestId: string;
+  questions: UserInputQuestion[];
+}
+
 // --- ACP-specific: elicitation ---
 
 export interface PendingElicitation {
@@ -476,6 +497,8 @@ export interface CodexAgentState extends SharedAgentState {
   threadId: string | null;
   pendingApproval: PendingApproval | null;
   respondToApproval: (requestId: string, approve: boolean) => Promise<void>;
+  pendingUserInput: PendingUserInput | null;
+  respondToUserInput: (requestId: string, answers: Record<string, string[]>) => Promise<void>;
 }
 
 export interface IdleAgentState extends SharedAgentState {

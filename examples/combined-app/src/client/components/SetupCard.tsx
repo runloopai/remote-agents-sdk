@@ -121,12 +121,12 @@ export function SetupCard({
             <div className="form-group">
               <label>Model</label>
               <div className="form-hint">
-                {agentType === "claude" ? "Claude model to use. Leave empty for default." : "Codex model to use. Leave empty for default."}
+                {agentType === "claude" ? "Claude model to use. Leave empty for default." : "Codex model to use. Leave empty for the default (gpt-5.6-sol)."}
               </div>
               <input
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
-                placeholder={agentType === "claude" ? "claude-sonnet-4-20250514" : "gpt-5.1-codex"}
+                placeholder={agentType === "claude" ? "claude-sonnet-4-20250514" : "gpt-5.6-sol"}
                 disabled={connecting}
               />
             </div>

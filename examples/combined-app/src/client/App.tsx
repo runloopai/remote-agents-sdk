@@ -16,6 +16,7 @@ import { ControlsBar } from "./components/ControlsBar.js";
 import { AssistantTurn } from "./components/AssistantTurn.js";
 import { AttachmentBar } from "./components/AttachmentBar.js";
 import { ApprovalPrompt } from "./components/ApprovalPrompt.js";
+import { UserInputPrompt } from "./components/UserInputPrompt.js";
 import { ElicitationForm } from "./components/ElicitationForm.js";
 import { PermissionDialog } from "./components/PermissionDialog.js";
 import { ControlRequestPrompt } from "./components/ControlRequestPrompt.js";
@@ -566,6 +567,14 @@ export default function App() {
                   <ApprovalPrompt
                     approval={agent.pendingApproval}
                     onRespond={agent.respondToApproval}
+                  />
+                )}
+
+                {agent.agentType === "codex" && agent.pendingUserInput && (
+                  <UserInputPrompt
+                    key={agent.pendingUserInput.requestId}
+                    userInput={agent.pendingUserInput}
+                    onRespond={agent.respondToUserInput}
                   />
                 )}
 
