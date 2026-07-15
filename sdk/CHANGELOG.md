@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.5](https://github.com/runloopai/remote-agents-sdk/compare/remote-agents-sdk-v0.4.4...remote-agents-sdk-v0.4.5) (2026-07-15)
+
+
+### Features
+
+* **examples:** support Codex question tool (item/tool/requestUserInput) in combined-app ([#142](https://github.com/runloopai/remote-agents-sdk/issues/142)) ([8286128](https://github.com/runloopai/remote-agents-sdk/commit/8286128eec7c72e02a667246fc27a2839e542b65))
+* **sdk:** add CodexAxonConnection and transport ([#135](https://github.com/runloopai/remote-agents-sdk/issues/135)) ([201da90](https://github.com/runloopai/remote-agents-sdk/commit/201da907e04ceacf0507ca913e0b40bc0910d170))
+* **sdk:** vendor codex app-server protocol types and event classification ([#134](https://github.com/runloopai/remote-agents-sdk/issues/134)) ([1fc97c4](https://github.com/runloopai/remote-agents-sdk/commit/1fc97c4269bafa6f2fa54f6058c6837ead28d7a2))
+
 ## [0.4.4](https://github.com/runloopai/remote-agents-sdk/compare/remote-agents-sdk-v0.4.3...remote-agents-sdk-v0.4.4) (2026-06-26)
 
 
