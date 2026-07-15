@@ -10,7 +10,18 @@
  * @module
  */
 
+export { AsyncMessageQueue } from "./async-message-queue.js";
+export {
+  AxonFrameTransport,
+  type AxonFrameTransportOptions,
+  type FrameRequestId,
+} from "./axon-frame-transport.js";
 export { resolveReplayTarget } from "./connect-guards.js";
+export {
+  type ConnectionReadLoopOptions,
+  type ReconnectableMessageTransport,
+  runConnectionReadLoop,
+} from "./connection-read-loop.js";
 export {
   ConnectionStateError,
   type ConnectionStateErrorCode,
@@ -27,6 +38,7 @@ export {
   isFromUser,
   type UserOriginEvent,
 } from "./origin-guards.js";
+export { PendingRequestMap } from "./pending-request-map.js";
 export { getLastSequence } from "./replay.js";
 export {
   getJsonRpcId,

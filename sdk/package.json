@@ -41,6 +41,11 @@
       "import": "./dist/claude/index.js",
       "default": "./dist/claude/index.js"
     },
+    "./codex": {
+      "types": "./dist/codex/index.d.ts",
+      "import": "./dist/codex/index.js",
+      "default": "./dist/codex/index.js"
+    },
     "./shared": {
       "types": "./dist/shared/index.d.ts",
       "import": "./dist/shared/index.js",

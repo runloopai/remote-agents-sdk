@@ -371,6 +371,23 @@ describe("ClaudeAxonConnection", () => {
       const result = await iter.next();
       expect(result.done).toBe(true);
     });
+
+    it("keeps messages buffered before a fatal error drainable", async () => {
+      const onError = vi.fn();
+      const conn = await createConnectedClient(transport, { onError });
+
+      transport._push({ type: "assistant", content: "kept" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      transport._throw(new SystemError("broker crashed"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(onError).toHaveBeenCalledWith(expect.any(SystemError));
+
+      const messages: WireData[] = [];
+      for await (const msg of conn.receiveMessages()) {
+        messages.push(msg as unknown as WireData);
+      }
+      expect(messages).toHaveLength(1);
+    });
   });
 
   describe("receiveResponse()", () => {

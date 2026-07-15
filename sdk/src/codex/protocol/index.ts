@@ -1,5 +1,6 @@
 /** Official Codex app-server protocol bindings and wire method constants. */
 export type * from "./generated/index.js";
+export type { ThreadStartParams, ThreadStartResponse, UserInput } from "./generated/v2/index.js";
 
 export const THREAD_START = "thread/start";
 export const RESPONSE_EVENT_TYPE = "response";
