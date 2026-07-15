@@ -184,7 +184,7 @@ describe("CodexAxonConnection", () => {
       ctrl.push(makeAgentEvent("response", { id: frame.id, result: { ok: true } }));
     });
     await conn.connect();
-    await expect(conn.request("model/list", {})).resolves.toEqual({ ok: true });
+    await expect(conn.readConfig()).resolves.toEqual({ ok: true });
   });
 
   it("deduplicates concurrent automatic thread starts", async () => {
@@ -297,7 +297,7 @@ describe("CodexAxonConnection", () => {
     ctrl.push(makeSystemEventWithRawPayload("broker.error", "boom", 1));
     await tick();
     expect(onError).toHaveBeenCalledWith(expect.any(SystemError));
-    await expect(conn.request("model/list")).rejects.toEqual(
+    await expect(conn.readConfig()).rejects.toEqual(
       expect.objectContaining<Partial<ConnectionStateError>>({ code: "terminated" }),
     );
   });

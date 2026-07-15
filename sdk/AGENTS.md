@@ -230,14 +230,17 @@ await conn.disconnect();
 |--------|---------|
 | `connect()` | Open transport and start the read loop; call `initialize()` next |
 | `initialize(params?)` | App-server handshake (`initialize` request + `initialized` notification); required after `connect()` |
-| `send(prompt)` | Send a prompt (`string` or `InputItem[]`); auto-starts a thread on first call |
+| `send(prompt, options?)` | Send a prompt (`string` or `InputItem[]`); auto-starts a thread on first call |
 | `startThread(params?)` | Start a server-side thread (cwd, model, `sandbox`, `approvalPolicy`, …) and return its id |
 | `resumeThread(threadId)` | Resume a known server-side thread and make it current |
 | `receiveTurn()` | Async iterator yielding app-server frames until `turn/completed` |
 | `receiveAgentEvents()` | Async iterator yielding all agent frames indefinitely |
 | `interrupt()` | Cancel the current turn (the broker supplies the live turn id) |
 | `steer(prompt)` | Steer the current in-flight turn |
-| `request(method, params?)` | Send any app-server request (e.g. `model/list`) and await its response |
+| `send(prompt, options?)` overrides | Per-turn overrides via `TurnOptions` (model, effort, sandboxPolicy, experimental `collaborationMode`, …) |
+| `startReview(target?, delivery?)` | Start a Codex review (`review/start`); defaults to uncommitted changes |
+| `compactThread()` | Compact the active thread's context (`thread/compact/start`) |
+| `readConfig(params?)` | Read the app-server's effective config (`config/read`) |
 | `onApprovalRequest(method, handler)` | Handle server-initiated approval requests (returns unsubscribe fn) |
 | `threadId` | The active thread id (`string \| undefined`) |
 | `onAxonEvent(listener)` | Subscribe to all Axon events (returns unsubscribe fn) |
