@@ -8,6 +8,11 @@ export type {
   ReviewTarget,
   ThreadStartParams,
   ThreadStartResponse,
+  ToolRequestUserInputAnswer,
+  ToolRequestUserInputOption,
+  ToolRequestUserInputParams,
+  ToolRequestUserInputQuestion,
+  ToolRequestUserInputResponse,
   TurnStartParams,
   UserInput,
 } from "./generated/v2/index.js";

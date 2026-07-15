@@ -11,6 +11,11 @@ export type BaseWsEvent =
   | { type: "permission_dismissed" }
   | { type: "elicitation_request"; requestId: string; request: ElicitationRequest }
   | { type: "elicitation_dismissed" }
-  | { type: "approval_request"; requestId: string; request: ApprovalRequest };
+  | { type: "approval_request"; requestId: string; request: ApprovalRequest }
+  | {
+      type: "user_input_request";
+      requestId: string;
+      request: Extract<ApprovalRequest, { method: "item/tool/requestUserInput" }>;
+    };
 
 export type WsEvent = BaseWsEvent & { agentId: string };

@@ -5,11 +5,17 @@ import {
   type ApprovalRequest,
   type CollaborationMode,
   type InputItem,
+  type ToolRequestUserInputResponse,
   type TurnOptions,
 } from "@runloop/remote-agents-sdk/codex";
 import type { AxonEventView } from "@runloop/remote-agents-sdk/shared";
 import { HttpError } from "./http-errors.ts";
 import type { WsBroadcaster, WsEvent, BaseWsEvent } from "./ws.ts";
+
+export type UserInputRequest = Extract<ApprovalRequest, { method: "item/tool/requestUserInput" }>;
+
+/** Answers keyed by question id, each a list of selected/typed values. */
+export type UserInputAnswers = Record<string, string[]>;
 
 export interface CodexStartOptions {
   blueprintName?: string;
@@ -21,6 +27,9 @@ export interface CodexStartOptions {
   model?: string;
   autoApprovePermissions?: boolean;
 }
+
+// Model used when the start request doesn't specify one.
+const DEFAULT_CODEX_MODEL = "gpt-5.6-sol";
 
 // Full-auto defaults: `--dangerously-bypass-approvals-and-sandbox` is a
 // `codex exec` flag the app-server doesn't accept; these config overrides are
@@ -87,6 +96,10 @@ export class CodexConnectionManager {
   private pendingApprovals = new Map<
     string,
     { request: ApprovalRequest; resolve: (approve: boolean) => void }
+  >();
+  private pendingUserInputs = new Map<
+    string,
+    { request: UserInputRequest; resolve: (answers: UserInputAnswers) => void }
   >();
 
   constructor(
@@ -157,7 +170,7 @@ export class CodexConnectionManager {
     });
 
     this.devbox = devbox;
-    this.storedOptions = opts;
+    this.storedOptions = { ...opts, model: opts.model ?? DEFAULT_CODEX_MODEL };
 
     this.ws.broadcast(this.tag({ type: "connection_progress", step: "Connecting to Codex..." }));
     const conn = this.wireConnection(axon, devbox, {
@@ -202,7 +215,9 @@ export class CodexConnectionManager {
       },
       ...(opts?.afterSequence != null ? { afterSequence: opts.afterSequence, replay: false } : {}),
       ...(opts?.onDisconnect ? { onDisconnect: opts.onDisconnect } : {}),
-      ...(interactiveApprovals ? { requestTimeoutMs: APPROVAL_TIMEOUT_MS } : {}),
+      // A human may need to answer an approval or a requestUserInput question
+      // in the UI, so keep the long window in every mode.
+      requestTimeoutMs: APPROVAL_TIMEOUT_MS,
       threadStartParams: {
         ...(this.storedOptions.workingDir ? { cwd: this.storedOptions.workingDir } : {}),
         ...(this.storedOptions.model ? { model: this.storedOptions.model } : {}),
@@ -249,6 +264,13 @@ export class CodexConnectionManager {
       conn.onApprovalRequest("applyPatchApproval", forward);
     }
 
+    // The question tool (item/tool/requestUserInput) is how the agent asks the
+    // user something mid-turn — it's not a permission gate, so forward it to
+    // the frontend even when approvals are auto-accepted.
+    conn.onApprovalRequest("item/tool/requestUserInput", (request) =>
+      this.forwardUserInput(request as UserInputRequest),
+    );
+
     return conn;
   }
 
@@ -270,6 +292,27 @@ export class CodexConnectionManager {
     if (!pending) return false;
     this.pendingApprovals.delete(requestId);
     pending.resolve(approve);
+    return true;
+  }
+
+  private forwardUserInput(request: UserInputRequest): Promise<unknown> {
+    const requestId = String(request.id);
+    console.log(`[user-input] ${request.method} request: id=${requestId}`);
+    this.ws.broadcast(this.tag({ type: "user_input_request", requestId, request }));
+
+    return new Promise<unknown>((resolve) => {
+      this.pendingUserInputs.set(requestId, {
+        request,
+        resolve: (answers) => resolve(buildUserInputResponse(answers)),
+      });
+    });
+  }
+
+  resolveUserInput(requestId: string, answers: UserInputAnswers): boolean {
+    const pending = this.pendingUserInputs.get(requestId);
+    if (!pending) return false;
+    this.pendingUserInputs.delete(requestId);
+    pending.resolve(answers);
     return true;
   }
 
@@ -475,7 +518,20 @@ export class CodexConnectionManager {
       pending.resolve(false);
     }
     this.pendingApprovals.clear();
+    for (const [, pending] of this.pendingUserInputs) {
+      pending.resolve({});
+    }
+    this.pendingUserInputs.clear();
   }
+}
+
+/** Wrap per-question answer lists in the protocol's response envelope. */
+function buildUserInputResponse(answers: UserInputAnswers): ToolRequestUserInputResponse {
+  return {
+    answers: Object.fromEntries(
+      Object.entries(answers).map(([questionId, values]) => [questionId, { answers: values }]),
+    ),
+  };
 }
 
 /** Map a boolean UI answer onto the method-specific response shape. */
