@@ -31,6 +31,15 @@ ANTHROPIC_API_KEY=your_anthropic_api_key
 OPENAI_API_KEY=your_openai_api_key
 ```
 
+Codex agents authenticate via a `~/.codex/auth.json` written into the devbox at
+launch. By default it's generated in api-key mode from `OPENAI_API_KEY`. To use
+ChatGPT-plan auth instead, set `CODEX_AUTH_JSON` to the full contents of your
+local `~/.codex/auth.json` (it takes precedence over `OPENAI_API_KEY`):
+
+```bash
+CODEX_AUTH_JSON="$(cat ~/.codex/auth.json)"
+```
+
 ### Build the shared blueprint (one-time, required)
 
 This example provisions devboxes with `blueprint_name: "axon-agents"` (see [`src/server/acp-manager.ts`](src/server/acp-manager.ts), [`src/server/claude-manager.ts`](src/server/claude-manager.ts), and [`src/server/codex-manager.ts`](src/server/codex-manager.ts)). That blueprint must exist on your Runloop account before starting an agent from the UI — otherwise `POST /api/start` will fail when creating the devbox. Codex agents require a blueprint built after the Codex CLI was added to the [`Dockerfile`](../blueprint/Dockerfile) — re-run the command below if your `axon-agents` image predates it.

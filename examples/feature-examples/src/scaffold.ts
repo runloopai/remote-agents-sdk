@@ -84,6 +84,16 @@ export async function setup(agent: AgentConfig, useCase: UseCase): Promise<Setup
       ...(Object.keys(devboxSecretsMap).length > 0 && { secrets: devboxSecretsMap }),
       launch_parameters: {
         keep_alive_time_seconds: 300,
+        // Codex reads credentials from ~/.codex/auth.json, not the
+        // OPENAI_API_KEY env var, so materialize an api-key-mode auth file
+        // before the broker spawns `codex app-server`.
+        ...(mergedAgent.protocol === "codex" && {
+          launch_commands: [
+            // python3 json.dumps handles any characters in the key safely;
+            // hand-assembling JSON in shell would break on quotes/backslashes.
+            'mkdir -p "$HOME/.codex" && umask 077 && python3 -c \'import json, os; print(json.dumps({"auth_mode": "apikey", "OPENAI_API_KEY": os.environ["OPENAI_API_KEY"]}))\' > "$HOME/.codex/auth.json"',
+          ],
+        }),
       },
     },
     { longPoll: { timeoutMs: DEVBOX_PROVISION_TIMEOUT_MS } },
@@ -167,9 +177,10 @@ export async function setup(agent: AgentConfig, useCase: UseCase): Promise<Setup
 
       log("Connecting (Codex)...");
       await withTimeout(conn.connect(), SETUP_STEP_TIMEOUT_MS, "Codex connect");
+      await withTimeout(conn.initialize(), SETUP_STEP_TIMEOUT_MS, "Codex initialize");
 
-      // No initialize step — the broker performs the app-server handshake itself,
-      // and the first send() (or an explicit startThread()) creates the thread.
+      // After the handshake, the first send() (or an explicit startThread())
+      // creates the thread.
       const ctx: RunContext = {
         agent: mergedAgent,
         acp: null,

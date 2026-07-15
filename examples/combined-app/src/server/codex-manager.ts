@@ -3,7 +3,9 @@ import type { Axon, Devbox } from "@runloop/api-client/sdk";
 import {
   CodexAxonConnection,
   type ApprovalRequest,
+  type CollaborationMode,
   type InputItem,
+  type TurnOptions,
 } from "@runloop/remote-agents-sdk/codex";
 import type { AxonEventView } from "@runloop/remote-agents-sdk/shared";
 import { HttpError } from "./http-errors.ts";
@@ -12,15 +14,54 @@ import type { WsBroadcaster, WsEvent, BaseWsEvent } from "./ws.ts";
 export interface CodexStartOptions {
   blueprintName?: string;
   launchCommands?: string[];
+  /** Extra CLI args for the `codex` binary, appended after the defaults. */
+  launchArgs?: string[];
   workingDir?: string;
   systemPrompt?: string;
   model?: string;
   autoApprovePermissions?: boolean;
 }
 
+// Full-auto defaults: `--dangerously-bypass-approvals-and-sandbox` is a
+// `codex exec` flag the app-server doesn't accept; these config overrides are
+// its app-server equivalent (no approval traffic, unsandboxed execution).
+// Skipped when interactive approvals are on so the UI approval flow still fires.
+const FULL_AUTO_LAUNCH_ARGS = [
+  "-c",
+  "approval_policy=never",
+  "-c",
+  "sandbox_mode=danger-full-access",
+];
+
 // Give the user plenty of time to answer an approval in the UI before the
 // SDK's handler timeout declines it.
 const APPROVAL_TIMEOUT_MS = 600_000;
+
+// Codex reads credentials from ~/.codex/auth.json, not the OPENAI_API_KEY env
+// var, so a launch command materializes the file from $CODEX_AUTH_JSON before
+// the broker spawns `codex app-server`.
+const WRITE_CODEX_AUTH_CMD =
+  'mkdir -p "$HOME/.codex" && umask 077 && printf \'%s\' "$CODEX_AUTH_JSON" > "$HOME/.codex/auth.json"';
+
+/**
+ * Resolve the auth.json contents to install on the devbox. `CODEX_AUTH_JSON`
+ * (full file contents, e.g. `$(cat ~/.codex/auth.json)` for ChatGPT-plan
+ * auth) wins; otherwise an api-key-mode file is built from `OPENAI_API_KEY`.
+ */
+function resolveCodexAuthJson(): string | undefined {
+  if (process.env.CODEX_AUTH_JSON) {
+    try {
+      // Validate and normalize to a single line so the devbox writes exactly
+      // what Codex expects, and a bad paste fails here rather than in the box.
+      return JSON.stringify(JSON.parse(process.env.CODEX_AUTH_JSON));
+    } catch {
+      throw new HttpError(400, "CODEX_AUTH_JSON is not valid JSON");
+    }
+  }
+  if (process.env.OPENAI_API_KEY)
+    return JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: process.env.OPENAI_API_KEY });
+  return undefined;
+}
 
 export class CodexConnectionManager {
   connection: CodexAxonConnection | null = null;
@@ -29,6 +70,20 @@ export class CodexConnectionManager {
   private axon: Axon | null = null;
   private devbox: Devbox | null = null;
   private storedOptions: CodexStartOptions = {};
+  // The initialize handshake is per app-server *process*, which outlives our
+  // client connections (including suspend/resume). Run it once per devbox and
+  // skip it on rewires so navigation doesn't publish redundant handshakes.
+  private appServerInitialized = false;
+  // Sticky turn/start overrides set by slash commands (/model, /effort).
+  // The protocol applies them "for this turn and subsequent turns", but we
+  // resend them every turn so they survive connection rewires.
+  private turnOverrides: TurnOptions = {};
+  // Native collaboration mode (/plan, /default), sent as turn/start's
+  // collaborationMode param. null = never set; let the app-server default.
+  private modeKind: "plan" | "default" | null = null;
+  // Live thread settings mirrored from thread/settings/updated notifications;
+  // collaborationMode.settings requires a model, so we echo the thread's own.
+  private threadSettings: { model?: string; effort?: string | null } = {};
   private pendingApprovals = new Map<
     string,
     { request: ApprovalRequest; resolve: (approve: boolean) => void }
@@ -47,9 +102,11 @@ export class CodexConnectionManager {
     const apiKey = process.env.RUNLOOP_API_KEY;
     const baseUrl = process.env.RUNLOOP_BASE_URL;
     const openaiApiKey = process.env.OPENAI_API_KEY;
+    const codexAuthJson = resolveCodexAuthJson();
 
     if (!apiKey) throw new HttpError(401, "RUNLOOP_API_KEY not set in server .env");
-    if (!openaiApiKey) throw new HttpError(401, "OPENAI_API_KEY not set in server .env");
+    if (!codexAuthJson)
+      throw new HttpError(401, "Neither OPENAI_API_KEY nor CODEX_AUTH_JSON set in server .env");
 
     const sdk = new RunloopSDK({
       bearerToken: apiKey,
@@ -74,14 +131,19 @@ export class CodexConnectionManager {
           axon_id: axon.id,
           protocol: brokerProtocol as "acp" | "claude_json",
           agent_binary: "/home/user/.local/bin/codex",
+          launch_args: [
+            ...(opts.autoApprovePermissions !== false ? FULL_AUTO_LAUNCH_ARGS : []),
+            ...(opts.launchArgs ?? []),
+          ],
           ...(opts.workingDir ? { working_directory: opts.workingDir } : {}),
         },
       ],
       environment_variables: {
-        OPENAI_API_KEY: openaiApiKey,
+        CODEX_AUTH_JSON: codexAuthJson,
+        ...(openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {}),
       },
       launch_parameters: {
-        ...(opts.launchCommands?.length ? { launch_commands: opts.launchCommands } : {}),
+        launch_commands: [WRITE_CODEX_AUTH_CMD, ...(opts.launchCommands ?? [])],
         lifecycle: {
           after_idle: {
             idle_time_seconds: 60,
@@ -102,6 +164,7 @@ export class CodexConnectionManager {
       onDisconnect: async () => { await devbox.shutdown(); },
     });
     await conn.connect();
+    await this.initializeOnce(conn);
 
     this.ws.broadcast(this.tag({ type: "connection_progress", step: "Starting thread..." }));
     try {
@@ -122,14 +185,22 @@ export class CodexConnectionManager {
   private wireConnection(
     axon: Axon,
     devbox: Devbox,
-    opts?: { onDisconnect?: () => Promise<void> },
+    opts?: { onDisconnect?: () => Promise<void>; afterSequence?: number },
   ): CodexAxonConnection {
-    this.axonEvents = [];
+    // A fresh wire replays full history for the client; a resume-from-sequence
+    // rewire keeps the accumulated events so the UI sees no duplicates.
+    if (opts?.afterSequence == null) this.axonEvents = [];
 
     const interactiveApprovals = this.storedOptions.autoApprovePermissions === false;
 
     const conn = new CodexAxonConnection(axon, devbox, {
       verbose: true,
+      // turn/start.collaborationMode (used by /plan) is an experimental API
+      // field; the app-server rejects it unless the client opts in here.
+      initializeParams: {
+        capabilities: { experimentalApi: true, requestAttestation: false },
+      },
+      ...(opts?.afterSequence != null ? { afterSequence: opts.afterSequence, replay: false } : {}),
       ...(opts?.onDisconnect ? { onDisconnect: opts.onDisconnect } : {}),
       ...(interactiveApprovals ? { requestTimeoutMs: APPROVAL_TIMEOUT_MS } : {}),
       threadStartParams: {
@@ -148,6 +219,19 @@ export class CodexConnectionManager {
 
     conn.onAxonEvent((ev) => {
       this.axonEvents.push(ev);
+      if (ev.origin === "AGENT_EVENT" && ev.event_type === "thread/settings/updated" && ev.payload) {
+        try {
+          const frame = JSON.parse(ev.payload) as {
+            params?: { threadSettings?: { model?: string; effort?: string | null } };
+          };
+          const settings = frame.params?.threadSettings;
+          if (settings?.model) {
+            this.threadSettings = { model: settings.model, effort: settings.effort ?? null };
+          }
+        } catch {
+          // Malformed payloads surface through the normal timeline path.
+        }
+      }
     });
 
     conn.onTimelineEvent((ev) => {
@@ -196,11 +280,177 @@ export class CodexConnectionManager {
     }
     const conn = this.wireConnection(this.axon, this.devbox);
     await conn.connect();
+    await this.initializeOnce(conn);
+  }
+
+  private async initializeOnce(conn: CodexAxonConnection): Promise<void> {
+    if (this.appServerInitialized) return;
+    await conn.initialize();
+    this.appServerInitialized = true;
   }
 
   async send(prompt: string | InputItem[]): Promise<void> {
     if (!this.connection) throw new HttpError(400, "Not connected");
-    await this.connection.send(prompt);
+    await this.ensureLiveConnection();
+    const collaborationMode = this.buildCollaborationMode();
+    const options: TurnOptions = {
+      ...this.turnOverrides,
+      ...(collaborationMode ? { collaborationMode } : {}),
+    };
+    if (Object.keys(options).length > 0) {
+      console.log(`[codex] turn options: ${JSON.stringify(options)}`);
+    }
+    await this.connection.send(prompt, options);
+  }
+
+  /**
+   * Codex's native mode switch: turn/start's collaborationMode param
+   * ({ mode: "plan" | "default", settings }). Its settings require a model,
+   * so echo the thread's live model/effort (mirrored from
+   * thread/settings/updated), letting /model and /effort overrides win.
+   */
+  private buildCollaborationMode(): CollaborationMode | undefined {
+    if (!this.modeKind) return undefined;
+    const model =
+      this.turnOverrides.model ?? this.threadSettings.model ?? this.storedOptions.model;
+    if (!model) {
+      // /plan resolves and caches the model up front, so this should not
+      // happen — but never silently drop the mode the user asked for.
+      this.note("Warning: message sent WITHOUT plan mode (thread model unknown).");
+      return undefined;
+    }
+    return {
+      mode: this.modeKind,
+      settings: {
+        model,
+        reasoning_effort: this.turnOverrides.effort ?? this.threadSettings.effort ?? null,
+        developer_instructions: null, // null = the mode's built-in instructions
+      },
+    };
+  }
+
+  /**
+   * Resolves the thread's model for collaborationMode.settings: overrides
+   * first, then live thread settings, then the effective config from the
+   * app-server. Caches the result so /plan works even when the
+   * thread/settings/updated notification never fired.
+   */
+  private async resolveModel(): Promise<string | undefined> {
+    const known =
+      this.turnOverrides.model ?? this.threadSettings.model ?? this.storedOptions.model;
+    if (known) return known;
+    if (!this.connection) return undefined;
+    try {
+      await this.ensureLiveConnection();
+      const response = await this.connection.readConfig();
+      const model = response.config?.model ?? undefined;
+      if (model) this.threadSettings = { ...this.threadSettings, model };
+      return model;
+    } catch (err) {
+      console.error("[codex] config/read failed while resolving model:", err);
+      return undefined;
+    }
+  }
+
+  /**
+   * Native slash commands, mapped onto app-server JSON-RPC methods.
+   * Returns false when the text is not a recognized command (the caller
+   * should send it as a normal prompt).
+   */
+  async handleSlashCommand(raw: string): Promise<boolean> {
+    if (!this.connection) throw new HttpError(400, "Not connected");
+    const [cmd = "", ...rest] = raw.slice(1).split(/\s+/);
+    const arg = rest.join(" ").trim();
+
+    switch (cmd.toLowerCase()) {
+      case "plan": {
+        const model = await this.resolveModel();
+        if (!model) {
+          this.note("Cannot enter plan mode: unable to determine the thread's model.");
+          return true;
+        }
+        this.modeKind = "plan";
+        this.note(`Plan mode on (${model}): Codex will read and plan, not modify. /default to exit.`);
+        return true;
+      }
+      case "default":
+        this.modeKind = "default";
+        this.note("Default mode restored.");
+        return true;
+      case "model":
+        if (!arg) {
+          this.note("Usage: /model <model-name>");
+          return true;
+        }
+        this.turnOverrides = { ...this.turnOverrides, model: arg };
+        this.note(`Model override for subsequent turns: ${arg}`);
+        return true;
+      case "effort":
+        if (!arg) {
+          this.note("Usage: /effort <low|medium|high>");
+          return true;
+        }
+        this.turnOverrides = { ...this.turnOverrides, effort: arg };
+        this.note(`Reasoning effort for subsequent turns: ${arg}`);
+        return true;
+      case "compact": {
+        await this.ensureLiveConnection();
+        const threadId = this.connection.threadId;
+        if (!threadId) {
+          this.note("No active thread to compact.");
+          return true;
+        }
+        await this.connection.compactThread();
+        this.note("Compacting thread context…");
+        return true;
+      }
+      case "review": {
+        await this.ensureLiveConnection();
+        await this.connection.startReview(
+          arg ? { type: "custom", instructions: arg } : { type: "uncommittedChanges" },
+        );
+        this.note(arg ? `Review started: ${arg}` : "Reviewing uncommitted changes…");
+        return true;
+      }
+      case "help":
+        this.note(
+          "Commands: /plan, /default, /model <name>, /effort <low|medium|high>, /compact, /review [instructions], /help",
+        );
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  // Notes are published to the Axon (not just the live WS) so slash-command
+  // outcomes are part of the durable event log and replay on resubscribe.
+  private note(text: string): void {
+    void this.connection
+      ?.publish({
+        event_type: "app/system_note",
+        origin: "EXTERNAL_EVENT",
+        source: "combined-app",
+        payload: JSON.stringify({ text }),
+      })
+      .catch((err: unknown) => console.error("[codex] failed to publish note:", err));
+  }
+
+  /**
+   * Re-wires the connection if its SSE stream silently died (the SDK retries
+   * a dropped stream once per connection lifetime, so a long idle/suspended
+   * devbox can outlive it). Resumes from the last seen sequence so previously
+   * broadcast events are not replayed to the client.
+   */
+  private async ensureLiveConnection(): Promise<void> {
+    if (!this.connection || !this.connection.isDisconnected) return;
+    if (!this.axon || !this.devbox) throw new HttpError(400, "Not connected");
+    console.log("[codex] event stream dropped — re-wiring connection before send");
+    const afterSequence = this.axonEvents.at(-1)?.sequence;
+    const conn = this.wireConnection(this.axon, this.devbox, {
+      ...(afterSequence != null ? { afterSequence } : {}),
+    });
+    await conn.connect();
+    await this.initializeOnce(conn);
   }
 
   async interrupt(): Promise<void> {
@@ -217,6 +467,10 @@ export class CodexConnectionManager {
     this.devbox = null;
     this.axonEvents = [];
     this.storedOptions = {};
+    this.appServerInitialized = false;
+    this.turnOverrides = {};
+    this.modeKind = null;
+    this.threadSettings = {};
     for (const [, pending] of this.pendingApprovals) {
       pending.resolve(false);
     }

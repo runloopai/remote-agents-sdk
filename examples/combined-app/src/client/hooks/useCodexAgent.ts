@@ -404,6 +404,23 @@ export function useCodexAgent(agentId: string | null): UseCodexAgentReturn {
   function handleTimelineEvent(tlEvent: CodexTimelineEvent): void {
     dispatch({ type: "APPEND_TIMELINE_EVENT", event: tlEvent });
 
+    // Slash-command outcomes are published to the Axon as app/system_note
+    // events, so they render live and replay on resubscribe.
+    if (tlEvent.axonEvent.event_type === "app/system_note") {
+      const payload = tryParseTimelinePayload<{ text?: string }>(tlEvent);
+      if (payload?.text) {
+        dispatch({ type: "APPEND_MESSAGE", message: {
+          id: `note-${tlEvent.axonEvent.sequence}`,
+          role: "system" as const,
+          itemType: "system_event" as const,
+          eventKind: "devbox_lifecycle" as const,
+          label: payload.text,
+          timestamp: tlEvent.axonEvent.timestamp_ms ?? Date.now(),
+        } });
+      }
+      return;
+    }
+
     // The client's own turn/start frames echo back as unknown USER_EVENTs —
     // render them as user chat messages.
     if (isFromUser(tlEvent.axonEvent) && tlEvent.axonEvent.event_type === "turn/start") {
@@ -529,7 +546,11 @@ export function useCodexAgent(agentId: string | null): UseCodexAgentReturn {
       if (content && content.length > 0) {
         await api("/api/prompt", { agentId, content });
       } else {
-        await api("/api/prompt", { agentId, text });
+        const result = await api<{ ok: boolean; command?: boolean }>("/api/prompt", { agentId, text });
+        // Slash commands don't start a turn — clear the optimistic turn state.
+        if (result.command) {
+          dispatch({ type: "SET", patch: { isAgentTurn: false } });
+        }
       }
     } catch (err) {
       dispatch({ type: "SET", patch: { error: err instanceof Error ? err.message : String(err) } });

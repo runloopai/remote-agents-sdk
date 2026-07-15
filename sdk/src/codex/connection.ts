@@ -15,12 +15,22 @@ import type {
   BaseConnectionOptions,
   TimelineEventListener,
 } from "../shared/types.js";
+import { VERSION } from "../version.js";
 import { classifyCodexAxonEvent } from "./classify-codex-axon-event.js";
 import type {
   CodexApprovalRequestMethod,
+  CollaborationMode,
+  ConfigReadParams,
+  ConfigReadResponse,
+  InitializeParams,
+  InitializeResponse,
+  ReviewDelivery,
+  ReviewStartResponse,
+  ReviewTarget,
   ServerRequest,
   ThreadStartParams,
   ThreadStartResponse,
+  TurnStartParams,
   UserInput,
 } from "./protocol/index.js";
 import { CODEX_APPROVAL_REQUEST_METHOD_SET } from "./protocol/index.js";
@@ -28,6 +38,16 @@ import { CodexAxonTransport, type CodexFrame, type CodexTransport } from "./tran
 import type { CodexTimelineEvent } from "./types.js";
 
 export type InputItem = UserInput;
+/**
+ * Per-turn overrides for {@link CodexAxonConnection.send}: everything
+ * `turn/start` accepts beyond the thread id and input (model, effort,
+ * sandboxPolicy, approvalPolicy, …). `collaborationMode` is an experimental
+ * app-server field absent from the generated {@link TurnStartParams}; using
+ * it requires initializing with capabilities `{ experimentalApi: true }`.
+ */
+export type TurnOptions = Omit<TurnStartParams, "threadId" | "input"> & {
+  collaborationMode?: CollaborationMode | null;
+};
 export type ApprovalMethod = CodexApprovalRequestMethod;
 export type ApprovalRequest = Extract<ServerRequest, { method: ApprovalMethod }>;
 export type ApprovalHandler = (request: ApprovalRequest) => Promise<unknown> | unknown;
@@ -64,17 +84,25 @@ export interface CodexAxonConnectionOptions extends BaseConnectionOptions {
   threadStartParams?: ThreadStartParams;
   approvalHandlers?: Partial<Record<ApprovalMethod, ApprovalHandler>>;
   requestTimeoutMs?: number;
+  /**
+   * Overrides merged into the `initialize` request sent by
+   * {@link CodexAxonConnection.initialize | initialize()}. Defaults identify
+   * this SDK as the client with no extra capabilities.
+   */
+  initializeParams?: Partial<InitializeParams>;
 }
 /**
  * Native Codex app-server connection over an Axon channel.
  *
- * Unlike Claude, Codex requires no client-side initialize handshake. Connect,
- * send a prompt, then consume {@link receiveTurn}; the first send creates a
- * server-side thread automatically.
+ * Like Claude, Codex requires an `initialize` handshake before it accepts
+ * requests: call {@link connect}, then {@link initialize}, then send a prompt
+ * and consume {@link receiveTurn}; the first send creates a server-side
+ * thread automatically.
  *
  * @example
  * ```ts
  * await connection.connect();
+ * await connection.initialize();
  * await connection.send("Explain this repository");
  * for await (const event of connection.receiveTurn()) console.log(event);
  * ```
@@ -92,6 +120,9 @@ export class CodexAxonConnection {
   private aborted = false;
   private suppressAutoReconnect = false;
   private counter = 0;
+  /** Whether the app-server `initialize` handshake has completed successfully. */
+  private handshakeComplete = false;
+  private _initializeResponse: InitializeResponse | undefined;
   private pending = new PendingRequestMap<string | number, unknown>();
   private messageQueue: AsyncMessageQueue<CodexFrame>;
   private threadWaiters = new Set<(id: string) => void>();
@@ -132,8 +163,17 @@ export class CodexAxonConnection {
   get threadId(): string | undefined {
     return this._threadId;
   }
+  /** Whether the `initialize` handshake has completed. */
+  get isInitialized(): boolean {
+    return this.handshakeComplete;
+  }
+  /** The app-server's `initialize` response, once {@link initialize} has run. */
+  get initializeResponse(): InitializeResponse | undefined {
+    return this._initializeResponse;
+  }
   /**
-   * Opens the SSE transport and starts its read loop. No `initialize` frame is sent.
+   * Opens the SSE transport and starts its read loop. Call {@link initialize}
+   * next — the app-server rejects requests until the handshake completes.
    * @throws {@link ConnectionStateError} with `terminated` or `already_connected`.
    */
   async connect(): Promise<void> {
@@ -174,6 +214,69 @@ export class CodexAxonConnection {
     this.everConnected = true;
     this.readLoop();
   }
+  /**
+   * Runs the **Codex app-server `initialize` handshake**: sends the
+   * `initialize` request (client info + capabilities) and the `initialized`
+   * notification. Required once after {@link connect} — the app-server
+   * rejects all other requests with `-32600 "Not initialized"` until this
+   * completes. If the server was already initialized (e.g. by a previous
+   * session against the same process), that response is treated as success.
+   *
+   * Uses a longer timeout (120 s) because the app-server may still be starting.
+   *
+   * @param params Overrides merged over {@link CodexAxonConnectionOptions.initializeParams} and the SDK defaults.
+   * @throws {@link ConnectionStateError} If the connection is not reusable after a fatal broker error (`code: "terminated"`).
+   * @throws {@link ConnectionStateError} If {@link connect} has not been called yet (`code: "not_connected"`).
+   * @throws {@link ConnectionStateError} If the handshake has already completed (`code: "already_initialized"`).
+   */
+  async initialize(params?: Partial<InitializeParams>): Promise<void> {
+    if (this.fatal)
+      throw new ConnectionStateError(
+        "terminated",
+        "This connection hit a fatal broker error and cannot be reused. Create a new instance.",
+      );
+    if (!this.transport?.isReady())
+      throw new ConnectionStateError(
+        "not_connected",
+        "Not connected. Call connect() before initialize().",
+      );
+    if (this.handshakeComplete)
+      throw new ConnectionStateError(
+        "already_initialized",
+        "Already initialized. Call disconnect() before reinitializing.",
+      );
+    const initializeParams: InitializeParams = {
+      clientInfo: {
+        name: "runloop-remote-agents-sdk",
+        title: null,
+        version: VERSION,
+        ...this.options.initializeParams?.clientInfo,
+        ...params?.clientInfo,
+      },
+      capabilities:
+        params?.capabilities !== undefined
+          ? params.capabilities
+          : (this.options.initializeParams?.capabilities ?? null),
+    };
+    this.log("init", "sending initialize request");
+    try {
+      this._initializeResponse = (await this.request(
+        "initialize",
+        initializeParams,
+        120_000, // longer timeout for initialization
+      )) as InitializeResponse;
+    } catch (error) {
+      // A live app-server that already completed the handshake (previous
+      // session or broker-side init) rejects a second initialize; the
+      // connection is still fully usable, so treat it as success.
+      if (!/already\s+initiali[sz]ed/i.test(error instanceof Error ? error.message : ""))
+        throw error;
+      this.log("init", "app-server already initialized; continuing");
+    }
+    await this.transport.write({ method: "initialized" });
+    this.handshakeComplete = true;
+    this.log("init", "initialized");
+  }
   /** Aborts only the current SSE stream, preserving listeners. */
   abortStream(): void {
     this.aborted = true;
@@ -190,6 +293,7 @@ export class CodexAxonConnection {
     await this.transport?.close();
     this.transport = undefined;
     this.running = false;
+    this.handshakeComplete = false;
     await runDisconnectHook(this.options.onDisconnect, this.log, this.handleError);
     this.closed = false;
   }
@@ -339,10 +443,12 @@ export class CodexAxonConnection {
     }
   }
   /**
-   * Sends an arbitrary app-server request and correlates its JSON-RPC response by id.
+   * Sends an app-server request and correlates its JSON-RPC response by id.
+   * Internal: the public surface is the typed methods ({@link send},
+   * {@link startReview}, {@link compactThread}, {@link readConfig}, …).
    * @throws {@link ConnectionStateError} with `terminated` or `not_connected`.
    */
-  async request(
+  private async request(
     method: string,
     params?: unknown,
     timeoutMs = this.options.requestTimeoutMs ?? 60_000,
@@ -406,12 +512,47 @@ export class CodexAxonConnection {
       if (waiter) this.threadWaiters.delete(waiter);
     }
   }
-  /** Sends text or structured input, creating a thread on the first call. */
-  async send(prompt: string | InputItem[]): Promise<void> {
+  /**
+   * Sends text or structured input, creating a thread on the first call.
+   * `options` carries per-turn overrides (see {@link TurnOptions}); the
+   * app-server applies them to this turn and subsequent turns.
+   */
+  async send(prompt: string | InputItem[], options?: TurnOptions): Promise<void> {
     const threadId = this._threadId ?? (await this.startThread());
     const input: InputItem[] =
       typeof prompt === "string" ? [{ type: "text", text: prompt, text_elements: [] }] : prompt;
-    await this.request("turn/start", { threadId, input });
+    await this.request("turn/start", { threadId, input, ...options });
+  }
+
+  /**
+   * Starts a Codex review on the current thread (`review/start`), creating a
+   * thread if needed. Defaults to reviewing uncommitted changes.
+   */
+  async startReview(
+    target: ReviewTarget = { type: "uncommittedChanges" },
+    delivery?: ReviewDelivery | null,
+  ): Promise<ReviewStartResponse> {
+    const threadId = this._threadId ?? (await this.startThread());
+    return (await this.request("review/start", {
+      threadId,
+      target,
+      ...(delivery !== undefined ? { delivery } : {}),
+    })) as ReviewStartResponse;
+  }
+
+  /** Compacts the active thread's context server-side (`thread/compact/start`). */
+  async compactThread(): Promise<void> {
+    if (!this._threadId)
+      throw new ConnectionStateError(
+        "not_connected",
+        "No active thread. Call startThread() first.",
+      );
+    await this.request("thread/compact/start", { threadId: this._threadId });
+  }
+
+  /** Reads the app-server's effective configuration (`config/read`). */
+  async readConfig(params: ConfigReadParams = {}): Promise<ConfigReadResponse> {
+    return (await this.request("config/read", params)) as ConfigReadResponse;
   }
   /** Interrupts the broker adapter's currently tracked turn. */
   async interrupt(): Promise<void> {

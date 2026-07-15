@@ -32,10 +32,11 @@ describe("CodexAxonConnection", () => {
     expect(conn.isDisconnected).toBe(true);
   });
 
-  it("captures thread id and sends whole turn/start and interrupt frames", async () => {
+  it("runs the initialize handshake then sends turn/start and interrupt frames", async () => {
     const { ctrl, mock, conn } = setup();
     mock.axon.publish.mockImplementation(async (event) => {
       const frame = JSON.parse(event.payload);
+      if (frame.id == null) return; // notifications get no response
       if (frame.method === "thread/start") {
         ctrl.push(
           makeAgentEvent("response", { id: frame.id, result: { thread: { id: "thr-1" } } }),
@@ -45,20 +46,81 @@ describe("CodexAxonConnection", () => {
       }
     });
     await conn.connect();
+    expect(conn.isInitialized).toBe(false);
+    await conn.initialize();
+    expect(conn.isInitialized).toBe(true);
     expect(await conn.startThread()).toBe("thr-1");
     await conn.send("hello");
     await conn.interrupt();
     const frames = mock.axon.publish.mock.calls.map(([event]) => JSON.parse(event.payload));
-    expect(frames.map((frame) => frame.method)).not.toContain("initialize");
-    expect(frames[1]).toMatchObject({
+    expect(frames[0]).toMatchObject({
+      method: "initialize",
+      params: {
+        clientInfo: { name: "runloop-remote-agents-sdk" },
+        capabilities: null,
+      },
+    });
+    expect(frames[1]).toMatchObject({ method: "initialized" });
+    expect(frames[1].id).toBeUndefined();
+    expect(frames[3]).toMatchObject({
       method: "turn/start",
       params: {
         threadId: "thr-1",
         input: [{ type: "text", text: "hello", text_elements: [] }],
       },
     });
-    expect(frames[2]).toMatchObject({ method: "turn/interrupt", params: {} });
+    expect(frames[4]).toMatchObject({ method: "turn/interrupt", params: {} });
     expect(frames.every((frame) => !String(frame.id).startsWith("runloop-broker-"))).toBe(true);
+  });
+
+  it("guards initialize ordering and duplicate calls", async () => {
+    const { ctrl, mock, conn } = setup();
+    await expect(conn.initialize()).rejects.toMatchObject({ code: "not_connected" });
+    mock.axon.publish.mockImplementation(async (event) => {
+      const frame = JSON.parse(event.payload);
+      if (frame.id != null) ctrl.push(makeAgentEvent("response", { id: frame.id, result: {} }));
+    });
+    await conn.connect();
+    await conn.initialize();
+    await expect(conn.initialize()).rejects.toMatchObject({ code: "already_initialized" });
+    await conn.disconnect();
+    expect(conn.isInitialized).toBe(false);
+  });
+
+  it("treats a server-side 'already initialized' rejection as success", async () => {
+    const { ctrl, mock, conn } = setup();
+    mock.axon.publish.mockImplementation(async (event) => {
+      const frame = JSON.parse(event.payload);
+      if (frame.method === "initialize") {
+        ctrl.push(
+          makeAgentEvent("response", {
+            id: frame.id,
+            error: { code: -32600, message: "Already initialized" },
+          }),
+        );
+      }
+    });
+    await conn.connect();
+    await conn.initialize();
+    expect(conn.isInitialized).toBe(true);
+  });
+
+  it("propagates other initialize errors", async () => {
+    const { ctrl, mock, conn } = setup();
+    mock.axon.publish.mockImplementation(async (event) => {
+      const frame = JSON.parse(event.payload);
+      if (frame.method === "initialize") {
+        ctrl.push(
+          makeAgentEvent("response", {
+            id: frame.id,
+            error: { code: -32600, message: "Not initialized" },
+          }),
+        );
+      }
+    });
+    await conn.connect();
+    await expect(conn.initialize()).rejects.toThrow(/Not initialized/);
+    expect(conn.isInitialized).toBe(false);
   });
 
   it("recovers the last thread id from replay", async () => {
@@ -122,7 +184,7 @@ describe("CodexAxonConnection", () => {
       ctrl.push(makeAgentEvent("response", { id: frame.id, result: { ok: true } }));
     });
     await conn.connect();
-    await expect(conn.request("model/list", {})).resolves.toEqual({ ok: true });
+    await expect(conn.readConfig()).resolves.toEqual({ ok: true });
   });
 
   it("deduplicates concurrent automatic thread starts", async () => {
@@ -235,7 +297,7 @@ describe("CodexAxonConnection", () => {
     ctrl.push(makeSystemEventWithRawPayload("broker.error", "boom", 1));
     await tick();
     expect(onError).toHaveBeenCalledWith(expect.any(SystemError));
-    await expect(conn.request("model/list")).rejects.toEqual(
+    await expect(conn.readConfig()).rejects.toEqual(
       expect.objectContaining<Partial<ConnectionStateError>>({ code: "terminated" }),
     );
   });
@@ -332,7 +394,7 @@ describe("CodexAxonConnection", () => {
       onError: vi.fn(),
     });
     await conn.connect();
-    const observed = conn.request("model/list").then(
+    const observed = conn.readConfig().then(
       () => undefined,
       (error: Error) => error,
     );
@@ -372,7 +434,7 @@ describe("CodexAxonConnection", () => {
       );
     });
     await conn.connect();
-    await expect(conn.request("thread/resume", {})).rejects.toMatchObject({
+    await expect(conn.resumeThread("thread-1")).rejects.toMatchObject({
       name: "CodexRequestError",
       code: -32602,
       message: "bad params",

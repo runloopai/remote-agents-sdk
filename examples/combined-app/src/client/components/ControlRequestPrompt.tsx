@@ -128,9 +128,13 @@ function AskUserQuestionForm({
       }
     });
 
+    // updatedInput must still satisfy the tool's input schema (questions
+    // requires >=1 items), so echo the original questions back with answers.
+    const innerRequest = request.rawRequest.request;
+    const originalInput = isCanUseTool(innerRequest) ? innerRequest.input : {};
     onRespond(request.requestId, {
       behavior: "allow",
-      updatedInput: { questions: [], answers },
+      updatedInput: { ...originalInput, answers },
     });
   };
 

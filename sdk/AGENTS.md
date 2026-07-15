@@ -185,7 +185,14 @@ import { RunloopSDK } from "@runloop/api-client";
 
 const sdk = new RunloopSDK({ bearerToken: process.env.RUNLOOP_API_KEY });
 
-// 1. Provision infrastructure — the broker spawns `codex app-server`
+// 1. Provision infrastructure — the broker spawns `codex app-server`.
+//    Codex authenticates via ~/.codex/auth.json (not the OPENAI_API_KEY env
+//    var), so a launch command writes the file first. Set CODEX_AUTH_JSON to
+//    your local ~/.codex/auth.json contents for ChatGPT-plan auth.
+const codexAuthJson =
+  process.env.CODEX_AUTH_JSON ??
+  JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: process.env.OPENAI_API_KEY! });
+
 const axon = await sdk.axon.create({ name: "codex-transport" });
 const devbox = await sdk.devbox.create({
   mounts: [{
@@ -194,11 +201,18 @@ const devbox = await sdk.devbox.create({
     protocol: "codex_json",
     agent_binary: "codex",
   }],
+  environment_variables: { CODEX_AUTH_JSON: codexAuthJson },
+  launch_parameters: {
+    launch_commands: [
+      'mkdir -p "$HOME/.codex" && umask 077 && printf \'%s\' "$CODEX_AUTH_JSON" > "$HOME/.codex/auth.json"',
+    ],
+  },
 });
 
-// 2. Connect — no initialize() step; the broker owns the app-server handshake
+// 2. Connect, then run the app-server initialize handshake
 const conn = new CodexAxonConnection(axon, devbox);
 await conn.connect();
+await conn.initialize();
 
 // 3. Send and receive — the first send() starts a server-side thread automatically
 await conn.send("What files are in this directory?");
@@ -214,15 +228,19 @@ await conn.disconnect();
 
 | Method | Purpose |
 |--------|---------|
-| `connect()` | Open transport and start the read loop; no initialize step |
-| `send(prompt)` | Send a prompt (`string` or `InputItem[]`); auto-starts a thread on first call |
+| `connect()` | Open transport and start the read loop; call `initialize()` next |
+| `initialize(params?)` | App-server handshake (`initialize` request + `initialized` notification); required after `connect()` |
+| `send(prompt, options?)` | Send a prompt (`string` or `InputItem[]`); auto-starts a thread on first call |
 | `startThread(params?)` | Start a server-side thread (cwd, model, `sandbox`, `approvalPolicy`, …) and return its id |
 | `resumeThread(threadId)` | Resume a known server-side thread and make it current |
 | `receiveTurn()` | Async iterator yielding app-server frames until `turn/completed` |
 | `receiveAgentEvents()` | Async iterator yielding all agent frames indefinitely |
 | `interrupt()` | Cancel the current turn (the broker supplies the live turn id) |
 | `steer(prompt)` | Steer the current in-flight turn |
-| `request(method, params?)` | Send any app-server request (e.g. `model/list`) and await its response |
+| `send(prompt, options?)` overrides | Per-turn overrides via `TurnOptions` (model, effort, sandboxPolicy, experimental `collaborationMode`, …) |
+| `startReview(target?, delivery?)` | Start a Codex review (`review/start`); defaults to uncommitted changes |
+| `compactThread()` | Compact the active thread's context (`thread/compact/start`) |
+| `readConfig(params?)` | Read the app-server's effective config (`config/read`) |
 | `onApprovalRequest(method, handler)` | Handle server-initiated approval requests (returns unsubscribe fn) |
 | `threadId` | The active thread id (`string \| undefined`) |
 | `onAxonEvent(listener)` | Subscribe to all Axon events (returns unsubscribe fn) |
@@ -368,7 +386,7 @@ create a new instance.
 - **ACP permissions default to auto-approve** (`allow_always` > `allow_once` > first option). Pass `requestPermission` to customize.
 - **Claude permissions also auto-approve** all tool use. Register a `"can_use_tool"` handler via `onControlRequest()` to customize.
 - **Codex approvals also auto-approve** by default. Register handlers via `onApprovalRequest()` to customize, or mount with `launch_args: ["-c", "approval_policy=never"]` for headless full-auto (no approval traffic at all).
-- **Explicit `connect()` required:** All connections require `await conn.connect()` first. ACP and Claude also require `initialize()` after it; Codex has none (the broker owns the app-server handshake).
+- **Explicit `connect()` required:** All connections require `await conn.connect()` first, followed by `initialize()` — ACP, Claude, and Codex alike.
 - **Node >= 22** required.
 - **`@runloop/api-client`** is a peer dep — you must install it yourself.
 - **`@anthropic-ai/claude-agent-sdk`** is an optional peer dep — only needed for the Claude module. The Codex module has no extra dependency.
