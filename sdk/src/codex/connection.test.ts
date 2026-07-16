@@ -200,8 +200,9 @@ describe("CodexAxonConnection", () => {
     await conn.listSkills({ forceReload: true });
     const frames = mock.axon.publish.mock.calls.map(([event]) => JSON.parse(event.payload));
     const byMethod = Object.fromEntries(frames.map((frame) => [frame.method, frame]));
-    expect(byMethod["account/rateLimits/read"]).toMatchObject({ params: {} });
-    expect(byMethod["account/usage/read"]).toMatchObject({ params: {} });
+    // Option<()> wire params: the field must be absent, not an empty object.
+    expect(byMethod["account/rateLimits/read"]).not.toHaveProperty("params");
+    expect(byMethod["account/usage/read"]).not.toHaveProperty("params");
     expect(byMethod["thread/read"]).toMatchObject({
       params: { threadId: "thr-1", includeTurns: true },
     });

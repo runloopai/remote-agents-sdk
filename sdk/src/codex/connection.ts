@@ -563,13 +563,22 @@ export class CodexAxonConnection {
   async readConfig(params: ConfigReadParams = {}): Promise<ConfigReadResponse> {
     return (await this.request("config/read", params)) as ConfigReadResponse;
   }
-  /** Reads the account's current rate limits (`account/rateLimits/read`). */
+  /**
+   * Reads the account's current rate limits (`account/rateLimits/read`).
+   * Wire params are `Option<()>`: the params field must be omitted, not `{}`.
+   */
   async getAccountRateLimits(): Promise<GetAccountRateLimitsResponse> {
-    return (await this.request("account/rateLimits/read", {})) as GetAccountRateLimitsResponse;
+    return (await this.request(
+      "account/rateLimits/read",
+      undefined,
+    )) as GetAccountRateLimitsResponse;
   }
-  /** Reads the account's token-usage summary (`account/usage/read`). */
+  /**
+   * Reads the account's token-usage summary (`account/usage/read`).
+   * Wire params are `Option<()>`: the params field must be omitted, not `{}`.
+   */
   async getAccountTokenUsage(): Promise<GetAccountTokenUsageResponse> {
-    return (await this.request("account/usage/read", {})) as GetAccountTokenUsageResponse;
+    return (await this.request("account/usage/read", undefined)) as GetAccountTokenUsageResponse;
   }
   /**
    * Reads a thread's metadata — and optionally its turns — from rollout
