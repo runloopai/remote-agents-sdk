@@ -177,6 +177,49 @@ describe("CodexAxonConnection", () => {
     expect(conn.threadId).toBeUndefined();
   });
 
+  it("sends the wire method and params for each read/maintenance wrapper", async () => {
+    const { ctrl, mock, conn } = setup();
+    mock.axon.publish.mockImplementation(async (event) => {
+      const frame = JSON.parse(event.payload);
+      if (frame.id == null) return;
+      if (frame.method === "thread/start") {
+        ctrl.push(
+          makeAgentEvent("response", { id: frame.id, result: { thread: { id: "thr-1" } } }),
+        );
+      } else {
+        ctrl.push(makeAgentEvent("response", { id: frame.id, result: {} }));
+      }
+    });
+    await conn.connect();
+    await conn.startThread();
+    await conn.getAccountRateLimits();
+    await conn.getAccountTokenUsage();
+    await conn.readThread({ includeTurns: true });
+    await conn.setThreadName("renamed");
+    await conn.listMcpServerStatus();
+    await conn.listSkills({ forceReload: true });
+    const frames = mock.axon.publish.mock.calls.map(([event]) => JSON.parse(event.payload));
+    const byMethod = Object.fromEntries(frames.map((frame) => [frame.method, frame]));
+    // Option<()> wire params: the field must be absent, not an empty object.
+    expect(byMethod["account/rateLimits/read"]).not.toHaveProperty("params");
+    expect(byMethod["account/usage/read"]).not.toHaveProperty("params");
+    expect(byMethod["thread/read"]).toMatchObject({
+      params: { threadId: "thr-1", includeTurns: true },
+    });
+    expect(byMethod["thread/name/set"]).toMatchObject({
+      params: { threadId: "thr-1", name: "renamed" },
+    });
+    expect(byMethod["mcpServerStatus/list"]).toMatchObject({ params: {} });
+    expect(byMethod["skills/list"]).toMatchObject({ params: { forceReload: true } });
+  });
+
+  it("rejects thread-scoped wrappers before a thread exists", async () => {
+    const { conn } = setup();
+    await conn.connect();
+    await expect(conn.readThread()).rejects.toMatchObject({ code: "not_connected" });
+    await expect(conn.setThreadName("nope")).rejects.toMatchObject({ code: "not_connected" });
+  });
+
   it("correlates responses by JSON-RPC id", async () => {
     const { ctrl, mock, conn } = setup();
     mock.axon.publish.mockImplementation(async (event) => {

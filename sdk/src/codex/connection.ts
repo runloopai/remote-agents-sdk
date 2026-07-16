@@ -22,12 +22,21 @@ import type {
   CollaborationMode,
   ConfigReadParams,
   ConfigReadResponse,
+  GetAccountRateLimitsResponse,
+  GetAccountTokenUsageResponse,
   InitializeParams,
   InitializeResponse,
+  ListMcpServerStatusParams,
+  ListMcpServerStatusResponse,
   ReviewDelivery,
   ReviewStartResponse,
   ReviewTarget,
   ServerRequest,
+  SkillsListParams,
+  SkillsListResponse,
+  ThreadReadParams,
+  ThreadReadResponse,
+  ThreadSetNameResponse,
   ThreadStartParams,
   ThreadStartResponse,
   TurnStartParams,
@@ -553,6 +562,58 @@ export class CodexAxonConnection {
   /** Reads the app-server's effective configuration (`config/read`). */
   async readConfig(params: ConfigReadParams = {}): Promise<ConfigReadResponse> {
     return (await this.request("config/read", params)) as ConfigReadResponse;
+  }
+  /**
+   * Reads the account's current rate limits (`account/rateLimits/read`).
+   * Wire params are `Option<()>`: the params field must be omitted, not `{}`.
+   */
+  async getAccountRateLimits(): Promise<GetAccountRateLimitsResponse> {
+    return (await this.request(
+      "account/rateLimits/read",
+      undefined,
+    )) as GetAccountRateLimitsResponse;
+  }
+  /**
+   * Reads the account's token-usage summary (`account/usage/read`).
+   * Wire params are `Option<()>`: the params field must be omitted, not `{}`.
+   */
+  async getAccountTokenUsage(): Promise<GetAccountTokenUsageResponse> {
+    return (await this.request("account/usage/read", undefined)) as GetAccountTokenUsageResponse;
+  }
+  /**
+   * Reads a thread's metadata — and optionally its turns — from rollout
+   * history (`thread/read`). Defaults to the active thread.
+   */
+  async readThread(params?: Partial<ThreadReadParams>): Promise<ThreadReadResponse> {
+    const threadId = params?.threadId ?? this._threadId;
+    if (!threadId)
+      throw new ConnectionStateError(
+        "not_connected",
+        "No active thread. Call startThread() first.",
+      );
+    return (await this.request("thread/read", { ...params, threadId })) as ThreadReadResponse;
+  }
+  /** Renames the active thread (`thread/name/set`). */
+  async setThreadName(name: string): Promise<ThreadSetNameResponse> {
+    if (!this._threadId)
+      throw new ConnectionStateError(
+        "not_connected",
+        "No active thread. Call startThread() first.",
+      );
+    return (await this.request("thread/name/set", {
+      threadId: this._threadId,
+      name,
+    })) as ThreadSetNameResponse;
+  }
+  /** Lists configured MCP servers with startup/auth status (`mcpServerStatus/list`). */
+  async listMcpServerStatus(
+    params: ListMcpServerStatusParams = {},
+  ): Promise<ListMcpServerStatusResponse> {
+    return (await this.request("mcpServerStatus/list", params)) as ListMcpServerStatusResponse;
+  }
+  /** Lists skills available to the session (`skills/list`). */
+  async listSkills(params: SkillsListParams = {}): Promise<SkillsListResponse> {
+    return (await this.request("skills/list", params)) as SkillsListResponse;
   }
   /** Interrupts the broker adapter's currently tracked turn. */
   async interrupt(): Promise<void> {
