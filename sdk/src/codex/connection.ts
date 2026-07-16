@@ -34,6 +34,10 @@ import type {
   ServerRequest,
   SkillsListParams,
   SkillsListResponse,
+  ThreadGoalClearResponse,
+  ThreadGoalGetResponse,
+  ThreadGoalSetParams,
+  ThreadGoalSetResponse,
   ThreadReadParams,
   ThreadReadResponse,
   ThreadSetNameResponse,
@@ -604,6 +608,42 @@ export class CodexAxonConnection {
       threadId: this._threadId,
       name,
     })) as ThreadSetNameResponse;
+  }
+  /** Sets or updates the active thread's goal (`thread/goal/set`). */
+  async setThreadGoal(
+    params: Omit<ThreadGoalSetParams, "threadId">,
+  ): Promise<ThreadGoalSetResponse> {
+    if (!this._threadId)
+      throw new ConnectionStateError(
+        "not_connected",
+        "No active thread. Call startThread() first.",
+      );
+    return (await this.request("thread/goal/set", {
+      ...params,
+      threadId: this._threadId,
+    })) as ThreadGoalSetResponse;
+  }
+  /** Reads the active thread's goal (`thread/goal/get`). */
+  async getThreadGoal(): Promise<ThreadGoalGetResponse> {
+    if (!this._threadId)
+      throw new ConnectionStateError(
+        "not_connected",
+        "No active thread. Call startThread() first.",
+      );
+    return (await this.request("thread/goal/get", {
+      threadId: this._threadId,
+    })) as ThreadGoalGetResponse;
+  }
+  /** Clears the active thread's goal (`thread/goal/clear`). */
+  async clearThreadGoal(): Promise<ThreadGoalClearResponse> {
+    if (!this._threadId)
+      throw new ConnectionStateError(
+        "not_connected",
+        "No active thread. Call startThread() first.",
+      );
+    return (await this.request("thread/goal/clear", {
+      threadId: this._threadId,
+    })) as ThreadGoalClearResponse;
   }
   /** Lists configured MCP servers with startup/auth status (`mcpServerStatus/list`). */
   async listMcpServerStatus(

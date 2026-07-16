@@ -198,6 +198,9 @@ describe("CodexAxonConnection", () => {
     await conn.setThreadName("renamed");
     await conn.listMcpServerStatus();
     await conn.listSkills({ forceReload: true });
+    await conn.setThreadGoal({ objective: "ship it" });
+    await conn.getThreadGoal();
+    await conn.clearThreadGoal();
     const frames = mock.axon.publish.mock.calls.map(([event]) => JSON.parse(event.payload));
     const byMethod = Object.fromEntries(frames.map((frame) => [frame.method, frame]));
     // Option<()> wire params: the field must be absent, not an empty object.
@@ -211,6 +214,11 @@ describe("CodexAxonConnection", () => {
     });
     expect(byMethod["mcpServerStatus/list"]).toMatchObject({ params: {} });
     expect(byMethod["skills/list"]).toMatchObject({ params: { forceReload: true } });
+    expect(byMethod["thread/goal/set"]).toMatchObject({
+      params: { threadId: "thr-1", objective: "ship it" },
+    });
+    expect(byMethod["thread/goal/get"]).toMatchObject({ params: { threadId: "thr-1" } });
+    expect(byMethod["thread/goal/clear"]).toMatchObject({ params: { threadId: "thr-1" } });
   });
 
   it("rejects thread-scoped wrappers before a thread exists", async () => {
@@ -218,6 +226,11 @@ describe("CodexAxonConnection", () => {
     await conn.connect();
     await expect(conn.readThread()).rejects.toMatchObject({ code: "not_connected" });
     await expect(conn.setThreadName("nope")).rejects.toMatchObject({ code: "not_connected" });
+    await expect(conn.setThreadGoal({ objective: "x" })).rejects.toMatchObject({
+      code: "not_connected",
+    });
+    await expect(conn.getThreadGoal()).rejects.toMatchObject({ code: "not_connected" });
+    await expect(conn.clearThreadGoal()).rejects.toMatchObject({ code: "not_connected" });
   });
 
   it("correlates responses by JSON-RPC id", async () => {
