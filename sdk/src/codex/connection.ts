@@ -125,6 +125,7 @@ export class CodexAxonConnection {
   readonly axonId: string;
   readonly devboxId: string;
   private _threadId: string | undefined;
+  private _currentTurnId: string | undefined;
   private transport?: CodexTransport;
   private running = false;
   private closed = false;
@@ -176,6 +177,10 @@ export class CodexAxonConnection {
   get threadId(): string | undefined {
     return this._threadId;
   }
+  /** The in-flight turn id, set on `turn/started` and cleared on `turn/completed`. */
+  get currentTurnId(): string | undefined {
+    return this._currentTurnId;
+  }
   /** Whether the `initialize` handshake has completed. */
   get isInitialized(): boolean {
     return this.handshakeComplete;
@@ -213,9 +218,17 @@ export class CodexAxonConnection {
       onAxonEvent: (event) => {
         this.axonListeners.emit(event);
         this.timelineListeners.emit(classifyCodexAxonEvent(event));
-        if (isFromAgent(event) && event.event_type === "thread/started" && event.payload != null) {
+        if (
+          isFromAgent(event) &&
+          (event.event_type === "thread/started" ||
+            event.event_type === "turn/started" ||
+            event.event_type === "turn/completed") &&
+          event.payload != null
+        ) {
           try {
-            this.captureThreadStarted(JSON.parse(event.payload) as CodexFrame);
+            const frame = JSON.parse(event.payload) as CodexFrame;
+            this.captureThreadStarted(frame);
+            this.captureTurnBoundary(frame);
           } catch {
             // Classification reports malformed events through the normal timeline surface.
           }
@@ -360,8 +373,16 @@ export class CodexAxonConnection {
       this.threadWaiters.clear();
     }
   }
+  private captureTurnBoundary(frame: CodexFrame): void {
+    if (frame.method !== "turn/started" && frame.method !== "turn/completed") return;
+    const id = (frame.params as { turn?: { id?: unknown } } | undefined)?.turn?.id;
+    if (typeof id !== "string") return;
+    if (frame.method === "turn/started") this._currentTurnId = id;
+    else if (this._currentTurnId === id) this._currentTurnId = undefined;
+  }
   private route(frame: CodexFrame): void {
     this.captureThreadStarted(frame);
+    this.captureTurnBoundary(frame);
     if (!frame.method && frame.id != null) {
       frame.error
         ? this.pending.reject(frame.id, toRequestError(frame.error))
@@ -655,14 +676,27 @@ export class CodexAxonConnection {
   async listSkills(params: SkillsListParams = {}): Promise<SkillsListResponse> {
     return (await this.request("skills/list", params)) as SkillsListResponse;
   }
-  /** Interrupts the broker adapter's currently tracked turn. */
+  /**
+   * Interrupts the in-flight turn (`turn/interrupt`). The app-server requires
+   * the thread and turn ids, which the connection tracks from `turn/started`
+   * notifications. A no-op when no turn is in flight.
+   * @throws {@link ConnectionStateError} with `not_connected` if no thread is active.
+   */
   async interrupt(): Promise<void> {
-    await this.request("turn/interrupt", {});
+    if (!this._threadId)
+      throw new ConnectionStateError(
+        "not_connected",
+        "No active thread. Call startThread() first.",
+      );
+    const turnId = this._currentTurnId;
+    if (!turnId) return;
+    await this.request("turn/interrupt", { threadId: this._threadId, turnId });
   }
   /** Resumes a known server-side thread and makes it current. */
   async resumeThread(threadId: string): Promise<void> {
     await this.request("thread/resume", { threadId });
     this._threadId = threadId;
+    this._currentTurnId = undefined;
   }
   /** Steers the current in-flight turn. */
   async steer(prompt: string | InputItem[]): Promise<void> {
