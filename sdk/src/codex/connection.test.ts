@@ -51,6 +51,14 @@ describe("CodexAxonConnection", () => {
     expect(conn.isInitialized).toBe(true);
     expect(await conn.startThread()).toBe("thr-1");
     await conn.send("hello");
+    ctrl.push(
+      makeAgentEvent("turn/started", {
+        method: "turn/started",
+        params: { threadId: "thr-1", turn: { id: "turn-1" } },
+      }),
+    );
+    await tick();
+    expect(conn.currentTurnId).toBe("turn-1");
     await conn.interrupt();
     const frames = mock.axon.publish.mock.calls.map(([event]) => JSON.parse(event.payload));
     expect(frames[0]).toMatchObject({
@@ -69,8 +77,53 @@ describe("CodexAxonConnection", () => {
         input: [{ type: "text", text: "hello", text_elements: [] }],
       },
     });
-    expect(frames[4]).toMatchObject({ method: "turn/interrupt", params: {} });
+    expect(frames[4]).toMatchObject({
+      method: "turn/interrupt",
+      params: { threadId: "thr-1", turnId: "turn-1" },
+    });
     expect(frames.every((frame) => !String(frame.id).startsWith("runloop-broker-"))).toBe(true);
+  });
+
+  it("clears the tracked turn on turn/completed and skips interrupt with nothing in flight", async () => {
+    const { ctrl, mock, conn } = setup();
+    mock.axon.publish.mockImplementation(async (event) => {
+      const frame = JSON.parse(event.payload);
+      if (frame.id == null) return;
+      if (frame.method === "thread/start") {
+        ctrl.push(
+          makeAgentEvent("response", { id: frame.id, result: { thread: { id: "thr-1" } } }),
+        );
+      } else {
+        ctrl.push(makeAgentEvent("response", { id: frame.id, result: {} }));
+      }
+    });
+    await conn.connect();
+    await conn.initialize();
+    await conn.startThread();
+    ctrl.push(
+      makeAgentEvent("turn/started", {
+        method: "turn/started",
+        params: { threadId: "thr-1", turn: { id: "turn-1" } },
+      }),
+    );
+    ctrl.push(
+      makeAgentEvent("turn/completed", {
+        method: "turn/completed",
+        params: { threadId: "thr-1", turn: { id: "turn-1", status: "completed" } },
+      }),
+    );
+    await tick();
+    expect(conn.currentTurnId).toBeUndefined();
+    const before = mock.axon.publish.mock.calls.length;
+    await conn.interrupt();
+    expect(mock.axon.publish.mock.calls.length).toBe(before);
+  });
+
+  it("rejects interrupt before a thread exists", async () => {
+    const { mock, conn } = setup();
+    mock.axon.publish.mockImplementation(async () => {});
+    await conn.connect();
+    await expect(conn.interrupt()).rejects.toMatchObject({ code: "not_connected" });
   });
 
   it("guards initialize ordering and duplicate calls", async () => {
