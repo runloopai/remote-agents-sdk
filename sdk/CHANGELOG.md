@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.7](https://github.com/runloopai/remote-agents-sdk/compare/remote-agents-sdk-v0.4.6...remote-agents-sdk-v0.4.7) (2026-07-17)
+
+
+### Bug Fixes
+
+* **sdk:** send thread and turn ids with codex turn/interrupt ([#149](https://github.com/runloopai/remote-agents-sdk/issues/149)) ([746b888](https://github.com/runloopai/remote-agents-sdk/commit/746b888f556e8830f434aa53b6191b8c21408613))
+
 ## [0.4.6](https://github.com/runloopai/remote-agents-sdk/compare/remote-agents-sdk-v0.4.5...remote-agents-sdk-v0.4.6) (2026-07-17)
 
 
