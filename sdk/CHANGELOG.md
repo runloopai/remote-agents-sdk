@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.6](https://github.com/runloopai/remote-agents-sdk/compare/remote-agents-sdk-v0.4.5...remote-agents-sdk-v0.4.6) (2026-07-17)
+
+
+### Features
+
+* **sdk:** codex read/maintenance RPC wrappers (status, usage, mcp, skills, rename) ([#146](https://github.com/runloopai/remote-agents-sdk/issues/146)) ([c4ed6dd](https://github.com/runloopai/remote-agents-sdk/commit/c4ed6dda45fe89c0d414fd570f5f09966e15721e))
+* **sdk:** codex thread-goal wrappers (thread/goal/set|get|clear) ([#147](https://github.com/runloopai/remote-agents-sdk/issues/147)) ([b8c0c09](https://github.com/runloopai/remote-agents-sdk/commit/b8c0c09078877525d2d255ea67becdbdae07b3a7))
+
 ## [0.4.5](https://github.com/runloopai/remote-agents-sdk/compare/remote-agents-sdk-v0.4.4...remote-agents-sdk-v0.4.5) (2026-07-15)
 
 
