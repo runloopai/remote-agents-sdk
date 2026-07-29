@@ -17,10 +17,15 @@ export interface AxonFrameTransportOptions<TFrame> {
   logPrefix: string;
   parseFrame(payload: string): TFrame | undefined;
   resolveEventType(frame: TFrame | undefined, raw: string): string;
-  isReplayRequest(event: AxonEventView, frame: TFrame): boolean;
-  requestId(frame: TFrame): FrameRequestId | undefined;
-  isReplayAnswer(event: AxonEventView, frame: TFrame): boolean;
-  answerId(frame: TFrame): FrameRequestId | undefined;
+  /**
+   * Replay-window buffering of server-initiated requests that were never
+   * answered. Omit all four for protocols with no server-initiated requests:
+   * nothing is buffered and the replay window yields nothing.
+   */
+  isReplayRequest?(event: AxonEventView, frame: TFrame): boolean;
+  requestId?(frame: TFrame): FrameRequestId | undefined;
+  isReplayAnswer?(event: AxonEventView, frame: TFrame): boolean;
+  answerId?(frame: TFrame): FrameRequestId | undefined;
   validateOutbound?(frame: TFrame): void;
   allowInvalidOutbound?: boolean;
   systemErrorsDuringReplay?: boolean;
@@ -100,11 +105,11 @@ export class AxonFrameTransport<TFrame> {
         if (event.payload != null) {
           const frame = this.options.parseFrame(event.payload);
           if (frame !== undefined) {
-            if (this.options.isReplayRequest(event, frame)) {
-              const id = this.options.requestId(frame);
+            if (this.options.isReplayRequest?.(event, frame)) {
+              const id = this.options.requestId?.(frame);
               if (id !== undefined) replayBuffer.set(id, frame);
-            } else if (this.options.isReplayAnswer(event, frame)) {
-              const id = this.options.answerId(frame);
+            } else if (this.options.isReplayAnswer?.(event, frame)) {
+              const id = this.options.answerId?.(frame);
               if (id !== undefined) replayBuffer.delete(id);
             }
           }

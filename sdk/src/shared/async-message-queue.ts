@@ -5,16 +5,29 @@ export class AsyncMessageQueue<T> {
   private closed = false;
   private warned = false;
 
+  /**
+   * @param maxBuffered Hard cap on buffered values. Once reached, pushing
+   * discards the oldest value so a queue with no consumer cannot grow without
+   * bound. Omit for an unbounded queue.
+   */
   constructor(
     private readonly highWaterMark = 1000,
     private readonly onHighWater?: (size: number) => void,
+    private readonly maxBuffered?: number,
   ) {}
+
+  /** Number of values buffered because no consumer was waiting. */
+  get size(): number {
+    return this.values.length;
+  }
 
   push(value: T): void {
     const waiter = this.waiters.shift();
     if (waiter) waiter(value);
     else {
       this.values.push(value);
+      if (this.maxBuffered !== undefined)
+        while (this.values.length > this.maxBuffered) this.values.shift();
       if (!this.warned && this.values.length >= this.highWaterMark) {
         this.warned = true;
         this.onHighWater?.(this.values.length);

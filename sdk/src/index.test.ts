@@ -29,6 +29,21 @@ describe("root exports", () => {
     expect(SDK.claude.AxonTransport).toBeDefined();
   });
 
+  it("exports a pi namespace", () => {
+    expect(SDK.pi).toBeDefined();
+    expect(typeof SDK.pi).toBe("object");
+  });
+
+  it("pi namespace contains PiAxonConnection and PiAxonTransport", () => {
+    expect(SDK.pi.PiAxonConnection).toBeDefined();
+    expect(SDK.pi.PiAxonTransport).toBeDefined();
+  });
+
+  it("pi namespace contains protocol constants and guards", () => {
+    expect(SDK.pi.PI_TURN_START_EVENT_TYPE).toBe("turn/start");
+    expect(typeof SDK.pi.isPiAgentSettledEvent).toBe("function");
+  });
+
   it("exports a shared namespace", () => {
     expect(SDK.shared).toBeDefined();
     expect(typeof SDK.shared).toBe("object");

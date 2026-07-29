@@ -46,6 +46,11 @@
       "import": "./dist/codex/index.js",
       "default": "./dist/codex/index.js"
     },
+    "./pi": {
+      "types": "./dist/pi/index.d.ts",
+      "import": "./dist/pi/index.js",
+      "default": "./dist/pi/index.js"
+    },
     "./shared": {
       "types": "./dist/shared/index.d.ts",
       "import": "./dist/shared/index.js",
