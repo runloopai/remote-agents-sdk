@@ -118,6 +118,11 @@ src/
         └── ...                      Setup, controls, permissions, elicitation
 ```
 
+## Docs
+
+- [`docs/architecture.md`](docs/architecture.md) — how the server, hooks and block manager fit together.
+- [`docs/pi-e2e-runbook.md`](docs/pi-e2e-runbook.md) — operator procedure for verifying the Pi path end to end against a live devbox (streaming, interrupt, steer/follow-up, suspend/resume, replay).
+
 ## License
 
 MIT — part of the [`remote-agents-sdk`](https://github.com/runloopai/remote-agents-sdk) workspace.

@@ -1,7 +1,11 @@
 import { isAgentTextChunk } from "@runloop/remote-agents-sdk/acp";
 import { isClaudeAssistantTextEvent, isClaudeResultEvent } from "@runloop/remote-agents-sdk/claude";
 import { isCodexItemCompletedEvent } from "@runloop/remote-agents-sdk/codex";
-import { isPiAssistantTextDeltaEvent } from "@runloop/remote-agents-sdk/pi";
+import {
+  isPiAgentEndEvent,
+  isPiAgentSettledEvent,
+  isPiAssistantTextDeltaEvent,
+} from "@runloop/remote-agents-sdk/pi";
 import type { UseCase } from "../types.js";
 import { waitFor } from "../validator.js";
 
@@ -100,9 +104,15 @@ export default {
       ctx.log("Running Pi path...");
 
       let responseText = "";
+      let sawAgentEnd = false;
+      let sawSettled = false;
       const unsub = ctx.pi.onTimelineEvent((event) => {
         if (isPiAssistantTextDeltaEvent(event)) {
           responseText += event.data.assistantMessageEvent.delta;
+        } else if (isPiAgentEndEvent(event)) {
+          sawAgentEnd = true;
+        } else if (isPiAgentSettledEvent(event)) {
+          sawSettled = true;
         }
       });
 
@@ -118,6 +128,20 @@ export default {
       unsub();
 
       if (!responseText.trim()) throw new Error("Agent did not respond with any text");
+
+      // The turn boundary is the thing worth asserting: receiveTurn() must have
+      // returned on agent_settled, never on the agent_end that precedes it.
+      if (!sawSettled) {
+        throw new Error("Turn ended without agent_settled");
+      }
+      ctx.log(`Turn settled (agent_end seen first: ${sawAgentEnd})`);
+
+      // Pi is idle once the turn settles, which is what makes the next prompt
+      // safe to send.
+      const state = await ctx.pi.getState();
+      if (state.isStreaming) {
+        throw new Error("Pi still reports isStreaming after agent_settled");
+      }
 
       ctx.log("Pass: Agent responded with text");
     } else {

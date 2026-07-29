@@ -49,6 +49,9 @@ export default {
     if (secondState.sessionId === firstState.sessionId) {
       throw new Error("new_session did not create a new session");
     }
+    if (secondState.sessionFile === firstSessionFile) {
+      throw new Error("new_session reused session A's transcript file");
+    }
 
     // Resume the first session by its file path.
     await pi.switchSession(firstSessionFile);
@@ -56,6 +59,11 @@ export default {
     if (resumedState.sessionId !== firstState.sessionId) {
       throw new Error(
         `switch_session did not restore session A (got ${resumedState.sessionId}, want ${firstState.sessionId})`,
+      );
+    }
+    if (resumedState.sessionFile !== firstSessionFile) {
+      throw new Error(
+        `switch_session reported ${resumedState.sessionFile}, want ${firstSessionFile}`,
       );
     }
     ctx.log(`Resumed session A: ${resumedState.sessionId}`);
