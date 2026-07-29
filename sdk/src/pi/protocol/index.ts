@@ -176,7 +176,11 @@ export interface AssistantMessage {
   responseModel?: string;
   responseId?: string;
   diagnostics?: unknown[];
-  usage: Usage;
+  /**
+   * Token accounting, absent when the request failed before any was recorded.
+   * The Rust crate materialises a zeroed `Usage` in that case.
+   */
+  usage?: Usage;
   stopReason: StopReason;
   errorMessage?: string;
   timestamp: number;
