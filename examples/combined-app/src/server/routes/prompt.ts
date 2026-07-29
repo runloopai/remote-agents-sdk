@@ -120,6 +120,39 @@ export function registerPromptRoutes(app: Express, registry: AgentRegistry, ws: 
         });
 
         res.json({ ok: true });
+      } else if (entry.agentType === "pi") {
+        const manager = entry.piManager!;
+        if (!manager.connection) {
+          res.status(400).json({ error: "Not connected" });
+          return;
+        }
+        const { content, text } = req.body;
+
+        const contentItems: Record<string, unknown>[] = Array.isArray(content)
+          ? content
+          : [{ type: "text", text }];
+
+        // Pi's prompt command takes one message string, so file attachments are
+        // flattened into it. Images are dropped: this example does not carry
+        // them through.
+        const prompt = contentItems
+          .map((item) =>
+            item.type === "file"
+              ? `--- ${item.name} ---\n${item.text}`
+              : ((item.text ?? "") as string),
+          )
+          .filter((part) => part.length > 0)
+          .join("\n\n");
+
+        manager.send(prompt).catch((err: unknown) => {
+          ws.broadcast({
+            type: "turn_error",
+            agentId: entry.id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+
+        res.json({ ok: true });
       } else {
         const manager = entry.acpManager!;
         const connection = manager.requireConnection();
@@ -185,6 +218,8 @@ export function registerPromptRoutes(app: Express, registry: AgentRegistry, ws: 
         await entry.claudeManager!.interrupt();
       } else if (entry.agentType === "codex") {
         await entry.codexManager!.interrupt();
+      } else if (entry.agentType === "pi") {
+        await entry.piManager!.interrupt();
       } else {
         const { connection, sessionId } = entry.acpManager!.requireSession();
         await connection.cancel({ sessionId });

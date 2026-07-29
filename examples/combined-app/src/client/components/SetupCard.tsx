@@ -37,7 +37,7 @@ export function SetupCard({
       <div className="setup-header">
         <h2>Combined App</h2>
         <p className="setup-subtitle">
-          Launch a <strong>Claude Code</strong>, <strong>Codex</strong>, or <strong>ACP</strong> agent in a secure cloud sandbox and interact through a unified interface.
+          Launch a <strong>Claude Code</strong>, <strong>Codex</strong>, <strong>Pi</strong>, or <strong>ACP</strong> agent in a secure cloud sandbox and interact through a unified interface.
         </p>
       </div>
 
@@ -87,6 +87,13 @@ export function SetupCard({
               Codex
             </button>
             <button
+              className={`agent-type-btn ${agentType === "pi" ? "active" : ""}`}
+              onClick={() => setAgentType("pi")}
+              disabled={connecting}
+            >
+              Pi
+            </button>
+            <button
               className={`agent-type-btn ${agentType === "acp" ? "active" : ""}`}
               onClick={() => setAgentType("acp")}
               disabled={connecting}
@@ -111,7 +118,7 @@ export function SetupCard({
           </>
         )}
 
-        {(agentType === "claude" || agentType === "codex") && (
+        {(agentType === "claude" || agentType === "codex" || agentType === "pi") && (
           <>
             <div className="form-group">
               <label>Blueprint Name</label>
@@ -121,12 +128,22 @@ export function SetupCard({
             <div className="form-group">
               <label>Model</label>
               <div className="form-hint">
-                {agentType === "claude" ? "Claude model to use. Leave empty for default." : "Codex model to use. Leave empty for the default (gpt-5.6-sol)."}
+                {agentType === "claude"
+                  ? "Claude model to use. Leave empty for default."
+                  : agentType === "pi"
+                    ? "Pi model, as provider/id. Leave empty for the default (nebius/glm-5.2)."
+                    : "Codex model to use. Leave empty for the default (gpt-5.6-sol)."}
               </div>
               <input
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
-                placeholder={agentType === "claude" ? "claude-sonnet-4-20250514" : "gpt-5.6-sol"}
+                placeholder={
+                  agentType === "claude"
+                    ? "claude-sonnet-4-20250514"
+                    : agentType === "pi"
+                      ? "nebius/glm-5.2"
+                      : "gpt-5.6-sol"
+                }
                 disabled={connecting}
               />
             </div>
@@ -160,7 +177,9 @@ export function SetupCard({
               ? "Skip permissions (--dangerously-skip-permissions)"
               : agentType === "codex"
                 ? "Auto-approve approvals"
-                : "Auto-approve permissions"}
+                : agentType === "pi"
+                  ? "Pi runs tools unattended (no approval protocol)"
+                  : "Auto-approve permissions"}
           </span>
         </label>
       </div>

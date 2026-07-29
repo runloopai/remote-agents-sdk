@@ -1,6 +1,7 @@
 FROM runloop:runloop/starter-x86_64
 
 RUN npm install -g @zed-industries/codex-acp
+RUN npm install -g @earendil-works/pi-coding-agent@0.82.1
 
 USER user
 WORKDIR /home/user

@@ -3,6 +3,7 @@ import { ACPConnectionManager } from "../acp-manager.ts";
 import type { AgentRegistry } from "../agent-registry.ts";
 import { ClaudeConnectionManager } from "../claude-manager.ts";
 import { CodexConnectionManager } from "../codex-manager.ts";
+import { PiConnectionManager } from "../pi-manager.ts";
 import type { WsBroadcaster } from "../ws.ts";
 import { asyncHandler, requireAgent } from "./helpers.ts";
 
@@ -23,6 +24,8 @@ export function registerLifecycleRoutes(app: Express, registry: AgentRegistry, w
         await entry.acpManager.subscribe();
       } else if (entry.agentType === "codex" && entry.codexManager) {
         await entry.codexManager.subscribe();
+      } else if (entry.agentType === "pi" && entry.piManager) {
+        await entry.piManager.subscribe();
       }
       res.json({ ok: true });
     }),
@@ -80,6 +83,29 @@ export function registerLifecycleRoutes(app: Express, registry: AgentRegistry, w
             console.error("[agent_started] publish failed:", err),
           );
         res.json({ agentId, agentType: "codex", ...result });
+      } else if (agentType === "pi") {
+        const manager = new PiConnectionManager(ws, agentId);
+        const result = await manager.start(config);
+        registry.add({
+          id: agentId,
+          agentType: "pi",
+          name: config.blueprintName ?? "Pi Agent",
+          axonId: result.axonId,
+          devboxId: result.devboxId,
+          createdAt: Date.now(),
+          piManager: manager,
+        });
+        manager.connection
+          ?.publish({
+            event_type: "agent_started",
+            origin: "EXTERNAL_EVENT",
+            payload: JSON.stringify({ agentType: "pi", agentId, ...config }),
+            source: "combined-app",
+          })
+          .catch((err: unknown) =>
+            console.error("[agent_started] publish failed:", err),
+          );
+        res.json({ agentId, agentType: "pi", ...result });
       } else {
         const manager = new ACPConnectionManager(ws, agentId);
         const result = await manager.start(config);

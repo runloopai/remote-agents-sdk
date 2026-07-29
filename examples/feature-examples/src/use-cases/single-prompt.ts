@@ -1,6 +1,7 @@
 import { isAgentTextChunk } from "@runloop/remote-agents-sdk/acp";
 import { isClaudeAssistantTextEvent, isClaudeResultEvent } from "@runloop/remote-agents-sdk/claude";
 import { isCodexItemCompletedEvent } from "@runloop/remote-agents-sdk/codex";
+import { isPiAssistantTextDeltaEvent } from "@runloop/remote-agents-sdk/pi";
 import type { UseCase } from "../types.js";
 import { waitFor } from "../validator.js";
 
@@ -13,7 +14,7 @@ const ACP_CHUNK_WAIT_MS = 5_000;
 export default {
   name: "single-prompt",
   description: "Send one prompt, receive text response",
-  protocols: ["acp", "claude", "codex"],
+  protocols: ["acp", "claude", "codex", "pi"],
   timeoutMs: 30_000,
 
   async run(ctx) {
@@ -89,6 +90,30 @@ export default {
         if (frame.method === "error") {
           throw new Error(`Turn error: ${JSON.stringify(frame.params)}`);
         }
+      }
+      unsub();
+
+      if (!responseText.trim()) throw new Error("Agent did not respond with any text");
+
+      ctx.log("Pass: Agent responded with text");
+    } else if (ctx.pi) {
+      ctx.log("Running Pi path...");
+
+      let responseText = "";
+      const unsub = ctx.pi.onTimelineEvent((event) => {
+        if (isPiAssistantTextDeltaEvent(event)) {
+          responseText += event.data.assistantMessageEvent.delta;
+        }
+      });
+
+      ctx.log(`Sending prompt: "${PROMPT}"`);
+      // send() resolves when Pi acknowledges the prompt, not when the turn
+      // finishes; a rejected prompt throws PiCommandError here.
+      await ctx.pi.send(PROMPT);
+
+      for await (const _frame of ctx.pi.receiveTurn()) {
+        // Drain until agent_settled. agent_end does not end the turn — Pi may
+        // auto-retry after it.
       }
       unsub();
 

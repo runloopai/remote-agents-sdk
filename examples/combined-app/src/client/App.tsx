@@ -243,12 +243,18 @@ export default function App() {
             autoApprovePermissions: startAutoApprove,
             ...sharedConfig,
           }
-        : {
-            blueprintName: blueprintName || undefined,
-            model: model || undefined,
-            dangerouslySkipPermissions: startAutoApprove,
-            ...sharedConfig,
-          };
+        : selectedAgentType === "pi"
+          ? {
+              blueprintName: blueprintName || undefined,
+              model: model || undefined,
+              ...sharedConfig,
+            }
+          : {
+              blueprintName: blueprintName || undefined,
+              model: model || undefined,
+              dangerouslySkipPermissions: startAutoApprove,
+              ...sharedConfig,
+            };
 
     try {
       const resp = await api<{ agentId: string; agentType: AgentType; [key: string]: unknown }>(
@@ -266,7 +272,9 @@ export default function App() {
           ? (blueprintName || "Claude Agent")
           : selectedAgentType === "codex"
             ? (blueprintName || "Codex Agent")
-            : (agentBinary || "ACP Agent"),
+            : selectedAgentType === "pi"
+              ? (blueprintName || "Pi Agent")
+              : (agentBinary || "ACP Agent"),
         axonId: resp.axonId as string,
         devboxId: resp.devboxId as string,
         createdAt: Date.now(),
@@ -430,7 +438,9 @@ export default function App() {
     ? "Claude Code"
     : agent.agentType === "codex"
       ? "Codex"
-      : "ACP Agent";
+      : agent.agentType === "pi"
+        ? "Pi"
+        : "ACP Agent";
 
   // Derive devbox status from the last devbox_lifecycle system event in messages
   const lastDevboxEvent = [...agent.messages].reverse().find(
@@ -507,6 +517,12 @@ export default function App() {
                   {agent.initInfo && (
                     <span className="config-label">Model: {agent.initInfo.model}</span>
                   )}
+                </div>
+              )}
+
+              {agent.agentType === "pi" && agent.sessionId && (
+                <div className="controls-bar">
+                  <span className="config-label">Session: {agent.sessionId}</span>
                 </div>
               )}
 

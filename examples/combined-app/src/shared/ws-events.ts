@@ -1,9 +1,13 @@
 import type { ACPTimelineEvent, ElicitationRequest, RequestPermissionRequest } from "@runloop/remote-agents-sdk/acp";
 import type { ClaudeTimelineEvent, SDKControlRequest } from "@runloop/remote-agents-sdk/claude";
 import type { ApprovalRequest, CodexTimelineEvent } from "@runloop/remote-agents-sdk/codex";
+import type { PiTimelineEvent } from "@runloop/remote-agents-sdk/pi";
 
 export type BaseWsEvent =
-  | { type: "timeline_event"; event: ACPTimelineEvent | ClaudeTimelineEvent | CodexTimelineEvent }
+  | {
+      type: "timeline_event";
+      event: ACPTimelineEvent | ClaudeTimelineEvent | CodexTimelineEvent | PiTimelineEvent;
+    }
   | { type: "connection_progress"; step: string }
   | { type: "turn_error"; error: string }
   | { type: "control_request"; controlRequest: SDKControlRequest }
