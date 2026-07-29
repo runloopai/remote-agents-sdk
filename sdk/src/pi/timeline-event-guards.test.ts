@@ -1,6 +1,10 @@
 import type { AxonEventView } from "@runloop/api-client/resources/axons";
 import { describe, expect, it } from "vitest";
-import { assistantMessage, messageUpdate } from "../__test-utils__/pi-fixtures.js";
+import {
+  assistantErrorMessageWithoutUsage,
+  assistantMessage,
+  messageUpdate,
+} from "../__test-utils__/pi-fixtures.js";
 import type { PiEvent, PiResponse } from "./protocol/index.js";
 import {
   isPiAgentEndEvent,
@@ -113,6 +117,17 @@ describe("Pi protocol guards", () => {
     expect(guard(protocolEvent({ type: "response", command: "prompt", success: true }))).toBe(
       false,
     );
+  });
+
+  it("classifies a message_end whose assistant message carries no usage", () => {
+    const message = assistantErrorMessageWithoutUsage();
+    const event = protocolEvent({ type: "message_end", message });
+    expect(isPiMessageEndEvent(event)).toBe(true);
+    if (isPiMessageEndEvent(event) && event.data.message.role === "assistant") {
+      expect(event.data.message.usage).toBeUndefined();
+      expect(event.data.message.stopReason).toBe("error");
+      expect(event.data.message.errorMessage).toBe("overloaded");
+    }
   });
 
   it("matches acknowledgement frames", () => {

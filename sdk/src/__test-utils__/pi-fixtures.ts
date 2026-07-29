@@ -34,6 +34,15 @@ export function assistantMessage(
   };
 }
 
+/**
+ * An assistant message for a request that failed before any token accounting
+ * was recorded: `stopReason: "error"`, an `errorMessage`, and no `usage`.
+ */
+export function assistantErrorMessageWithoutUsage(): AssistantMessage {
+  const { usage: _usage, ...message } = assistantMessage([], "error");
+  return { ...message, errorMessage: "overloaded" };
+}
+
 export function toolResultMessage(): ToolResultMessage {
   return {
     role: "toolResult",
