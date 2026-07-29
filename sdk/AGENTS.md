@@ -453,7 +453,7 @@ create a new instance.
 - **Explicit `connect()` required:** All connections require `await conn.connect()` first, followed by `initialize()` — ACP, Claude, and Codex alike. **Pi is the exception:** it has no handshake and no `initialize()`; `connect()` is enough.
 - **Pi's `send()` resolves on acceptance, not completion.** Pi's ack means only that the prompt was accepted. Await `receiveTurn()` (which ends at `agent_settled`) or the `turn.completed` system event for the response.
 - **Pi's `agent_end` is not the end of a turn.** Pi may follow it with an automatic retry (`willRetry: true`). Only `agent_settled` ends an accepted turn.
-- **Pi streams one `message_update` per token**, each carrying a full `partial` assistant message. Either use the push surfaces (`onTimelineEvent` / `onAxonEvent`, which are unbounded) or drain `receiveAgentEvents()`, otherwise the message queue warns at 1000 buffered frames.
+- **Pi streams one `message_update` per token**, each carrying a full `partial` assistant message. The push surfaces (`onTimelineEvent` / `onAxonEvent`) see every frame. The pull surfaces (`receiveAgentEvents()` / `receiveTurn()`) buffer at most `maxQueuedFrames` (default 1000) and then discard the oldest frame, warning once — so a listener-only application keeps bounded memory, and a pull consumer must keep up.
 - **Node >= 22** required.
 - **`@runloop/api-client`** is a peer dep — you must install it yourself.
 - **`@anthropic-ai/claude-agent-sdk`** is an optional peer dep — only needed for the Claude module. The Codex and Pi modules have no extra dependency.

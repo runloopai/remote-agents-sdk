@@ -69,6 +69,19 @@ describe("AsyncMessageQueue", () => {
     expect(onHighWater).toHaveBeenCalledTimes(2);
   });
 
+  it("discards the oldest values once maxBuffered is reached", async () => {
+    const queue = new AsyncMessageQueue<number>(3, undefined, 3);
+    for (const value of [1, 2, 3, 4, 5]) queue.push(value);
+    expect(queue.size).toBe(3);
+    expect([await queue.next(), await queue.next(), await queue.next()]).toEqual([3, 4, 5]);
+  });
+
+  it("buffers without bound when maxBuffered is omitted", () => {
+    const queue = new AsyncMessageQueue<number>(2);
+    for (const value of [1, 2, 3, 4, 5]) queue.push(value);
+    expect(queue.size).toBe(5);
+  });
+
   it("buffers values pushed after close(false) for a later drain", async () => {
     const queue = new AsyncMessageQueue<string>();
     queue.close(false);

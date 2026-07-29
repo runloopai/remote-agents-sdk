@@ -61,9 +61,21 @@ export class PiCommandError extends Error {
   }
 }
 
+/** Default cap on frames buffered for {@link PiAxonConnection.receiveAgentEvents}. */
+const DEFAULT_MAX_QUEUED_FRAMES = 1000;
+
 /** Options for a native Pi connection. @category Configuration */
 export interface PiAxonConnectionOptions extends BaseConnectionOptions {
   requestTimeoutMs?: number;
+  /**
+   * Cap on frames buffered for the pull surfaces
+   * ({@link PiAxonConnection.receiveAgentEvents} and
+   * {@link PiAxonConnection.receiveTurn}). Once reached the oldest frame is
+   * discarded, so an application that consumes only through
+   * {@link PiAxonConnection.onTimelineEvent} keeps bounded memory. Defaults to
+   * 1000.
+   */
+  maxQueuedFrames?: number;
 }
 
 /**
@@ -94,6 +106,8 @@ export class PiAxonConnection {
   private aborted = false;
   private suppressAutoReconnect = false;
   private counter = 0;
+  /** Id of the most recent `prompt`, used to correlate a rejection to its turn. */
+  private latestPromptId: string | undefined;
   private pending = new PendingRequestMap<string, unknown>();
   private messageQueue: AsyncMessageQueue<PiFrame>;
   private abortController = new AbortController();
@@ -112,11 +126,16 @@ export class PiAxonConnection {
     this.log = makeLogger("pi-sdk", options.verbose ?? false);
     this.axonListeners = new ListenerSet(this.handleError);
     this.timelineListeners = new ListenerSet(this.handleError);
-    this.messageQueue = new AsyncMessageQueue(1000, (size) =>
-      this.handleError(
-        `[PiAxonConnection] Message queue has ${size} buffered messages. ` +
-          "Ensure you are consuming messages via receiveAgentEvents() or receiveTurn().",
-      ),
+    const maxQueuedFrames = options.maxQueuedFrames ?? DEFAULT_MAX_QUEUED_FRAMES;
+    this.messageQueue = new AsyncMessageQueue(
+      maxQueuedFrames,
+      (size) =>
+        this.handleError(
+          `[PiAxonConnection] Message queue is full at ${size} buffered frames; ` +
+            "the oldest are being discarded. Consume frames via receiveAgentEvents() " +
+            "or receiveTurn(), or raise maxQueuedFrames.",
+        ),
+      maxQueuedFrames,
     );
   }
   get isConnected(): boolean {
@@ -265,6 +284,7 @@ export class PiAxonConnection {
           : this.pending.reject(ack.id, toCommandError(ack)));
       // A rejected prompt completes the broker turn, so it stays visible to
       // receiveTurn() even though send() already surfaced it as an error.
+      // receiveTurn() correlates it on `id` before acting on it.
       if (settled && !(ack.command === PROMPT_COMMAND && !ack.success)) return;
     }
     this.messageQueue.push(frame);
@@ -286,7 +306,11 @@ export class PiAxonConnection {
       );
     if (!this.transport?.isReady())
       throw new ConnectionStateError("not_connected", "Not connected. Call connect() first.");
-    const id = command.id ?? `pi-sdk-${++this.counter}-${Math.random().toString(36).slice(2, 10)}`;
+    // A blank id is what the broker treats as absent: it would stamp its own
+    // `broker-N` id and the ack could never resolve a pending `""` entry.
+    const explicitId = typeof command.id === "string" && command.id.trim() !== "" ? command.id : "";
+    const id = explicitId || `pi-sdk-${++this.counter}-${Math.random().toString(36).slice(2, 10)}`;
+    if (command.type === PROMPT_COMMAND) this.latestPromptId = id;
     const promise = this.pending.create(id, timeoutMs, `Command timeout: ${command.type}`);
     try {
       await this.transport.write({ ...command, id });
@@ -358,14 +382,23 @@ export class PiAxonConnection {
    * `agent_end`, which Pi may follow with an automatic retry
    * (`willRetry: true`). Also terminates on a rejected `prompt`, which
    * completes the turn immediately.
+   *
+   * A rejection ends only the turn it belongs to: one left over from an
+   * earlier {@link send} whose caller caught the error without draining is
+   * skipped, so it cannot cut a later accepted turn short. The broker reports
+   * rejections of its own prompts through the `turn.failed` system event.
    */
   async *receiveTurn(): AsyncGenerator<PiFrame> {
     for await (const frame of this.receiveAgentEvents()) {
+      const ack = frame as Partial<PiResponse>;
+      if (ack.type === PI_RESPONSE_EVENT_TYPE && ack.command === PROMPT_COMMAND && !ack.success) {
+        if (ack.id !== undefined && ack.id !== this.latestPromptId) continue;
+        this.latestPromptId = undefined;
+        yield frame;
+        return;
+      }
       yield frame;
       if (frame.type === AGENT_SETTLED) return;
-      const ack = frame as Partial<PiResponse>;
-      if (ack.type === PI_RESPONSE_EVENT_TYPE && ack.command === PROMPT_COMMAND && !ack.success)
-        return;
     }
   }
   async publish(params: AxonPublishParams): Promise<PublishResultView> {

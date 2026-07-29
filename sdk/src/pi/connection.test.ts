@@ -194,6 +194,58 @@ describe("PiAxonConnection", () => {
     ]);
   });
 
+  it("does not let an undrained rejection terminate a later accepted turn", async () => {
+    const ctx = setup();
+    let rejectPrompt = true;
+    ackAll(ctx, (type) =>
+      type === "prompt" && rejectPrompt ? { success: false, error: "busy" } : {},
+    );
+    await ctx.conn.connect();
+    // The first prompt is rejected and its caller never drains the turn, so
+    // the rejection ack is left sitting in the queue.
+    await expect(ctx.conn.send("first")).rejects.toBeInstanceOf(PiCommandError);
+    rejectPrompt = false;
+    await ctx.conn.send("second");
+    ctx.ctrl.push(makeAgentEvent("turn_start", { type: "turn_start" }));
+    ctx.ctrl.push(makeAgentEvent("agent_settled", { type: "agent_settled" }));
+    const frames = [];
+    for await (const frame of ctx.conn.receiveTurn()) frames.push(frame);
+    // The stale rejection is skipped; the accepted turn runs to agent_settled.
+    expect(frames.map((frame) => frame.type)).toEqual(["turn_start", "agent_settled"]);
+  });
+
+  it("bounds the pull queue when frames are consumed only through listeners", async () => {
+    const ctx = setup({ maxQueuedFrames: 10, onError: () => {} });
+    const seen: string[] = [];
+    ctx.conn.onTimelineEvent(() => seen.push("event"));
+    await ctx.conn.connect();
+    for (let index = 0; index < 50; index++)
+      ctx.ctrl.push(
+        makeAgentEvent("message_update", {
+          type: "message_update",
+          assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: `${index}` },
+        }),
+      );
+    ctx.ctrl.push(makeAgentEvent("agent_settled", { type: "agent_settled" }));
+    await tick();
+    // Every frame reached the listener, but the pull queue kept only the cap.
+    expect(seen).toHaveLength(51);
+    const frames = [];
+    for await (const frame of ctx.conn.receiveTurn()) frames.push(frame);
+    expect(frames).toHaveLength(10);
+    expect(frames.at(-1)?.type).toBe("agent_settled");
+  });
+
+  it("generates an id for a blank caller-supplied id", async () => {
+    const ctx = setup();
+    ackAll(ctx);
+    await ctx.conn.connect();
+    await ctx.conn.command({ type: "prompt", id: "  ", message: "hi" });
+    expect(ctx.frames()).toEqual([
+      { type: "prompt", id: expect.stringMatching(/^pi-sdk-/), message: "hi" },
+    ]);
+  });
+
   it("resolves getState and captures session identity from the ack", async () => {
     const ctx = setup();
     ackAll(ctx, () => ({ data: SESSION_STATE }));

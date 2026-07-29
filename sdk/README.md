@@ -765,6 +765,7 @@ Pi has **no handshake**: `connect()` is the whole setup and there is no `initial
 | `replay` | `boolean` | Replay the channel's history on connect |
 | `afterSequence` | `number` | Replay only events after this sequence number |
 | `requestTimeoutMs` | `number` | Timeout for command acknowledgement (default `60000`) |
+| `maxQueuedFrames` | `number` | Cap on frames buffered for the pull surfaces; the oldest is discarded past it (default `1000`) |
 | `onError` | `(error: unknown) => void` | Error callback (defaults to `console.error`) |
 | `onDisconnect` | `() => void \| Promise<void>` | Teardown callback invoked by `disconnect()` (e.g. devbox shutdown) |
 
@@ -782,7 +783,7 @@ Pi has **no handshake**: `connect()` is the whole setup and there is no `initial
 | `switchSession(sessionPath)` | Resume a persisted session by its `sessionFile` path |
 | `command(frame)` | Escape hatch for any Pi command not wrapped above |
 | `receiveAgentEvents()` | Async generator over every inbound frame |
-| `receiveTurn()` | Async generator that ends at `agent_settled` (or a rejected `prompt` ack) |
+| `receiveTurn()` | Async generator that ends at `agent_settled` (or at the rejection ack of the prompt it belongs to) |
 | `receiveTimelineEvents()` | Async generator over classified `PiTimelineEvent`s |
 | `onAxonEvent(listener)` / `onTimelineEvent(listener)` | Register listeners; returns an unsubscribe function |
 | `publish(params)` | Publish a custom event to the channel |
@@ -1115,7 +1116,7 @@ type WireData = Record<string, any>;
 - **Permission handling** (Claude): The `ClaudeAxonConnection` auto-approves all tool use by default. Register a `"can_use_tool"` handler via `onControlRequest()` to customize.
 - **Approval handling** (Codex): The `CodexAxonConnection` auto-approves server-initiated approval requests by default. Register handlers via `onApprovalRequest()` to customize, or mount with `launch_args: ["-c", "approval_policy=never"]` to skip approval traffic entirely.
 - **Turn completion** (Pi): `send()` resolves when Pi *accepts* the prompt, not when the turn ends, and `agent_end` can be followed by a retry. Use `receiveTurn()` (or watch for `agent_settled`) to detect the real end of a turn.
-- **Streaming volume** (Pi): Pi emits one `message_update` per token, each carrying a cumulative `partial` assistant message. Consume `receiveAgentEvents()`/`receiveTurn()` promptly — the internal queue warns past 1000 buffered frames.
+- **Streaming volume** (Pi): Pi emits one `message_update` per token, each carrying a cumulative `partial` assistant message. `onTimelineEvent()`/`onAxonEvent()` listeners see every frame; the pull surfaces (`receiveAgentEvents()`/`receiveTurn()`) buffer at most `maxQueuedFrames` (default 1000) and then discard the oldest, warning once. Applications that consume only through listeners therefore keep bounded memory; a pull consumer must keep up or raise the cap.
 
 ### ACP: `prompt()` resolves before all session updates arrive
 
