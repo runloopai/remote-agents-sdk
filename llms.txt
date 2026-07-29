@@ -8,7 +8,7 @@ Index for generating code that uses the SDK to connect to Runloop-hosted remote 
 npm install @runloop/remote-agents-sdk @runloop/api-client
 # Claude module only:
 npm install @anthropic-ai/claude-agent-sdk
-# Codex module needs no extra dependency (protocol types are vendored)
+# Codex and Pi modules need no extra dependency (protocol types are vendored)
 ```
 
 ## Connecting
@@ -17,11 +17,12 @@ Refer to ../scaffold.ts for setup and advice on best practices.
 
 ## Use Cases
 
-- [agent-via-blueprint](https://github.com/runloopai/remote-agents-sdk/blob/main/examples/feature-examples/src/use-cases/agent-via-blueprint.ts) — Use pre-built blueprint with agents baked in (acp + claude + codex)
+- [agent-via-blueprint](https://github.com/runloopai/remote-agents-sdk/blob/main/examples/feature-examples/src/use-cases/agent-via-blueprint.ts) — Use pre-built blueprint with agents baked in (acp + claude + codex + pi)
 - [approval-codex](https://github.com/runloopai/remote-agents-sdk/blob/main/examples/feature-examples/src/use-cases/approval-codex.ts) — Handle a server-initiated command approval round-trip via onApprovalRequest (codex)
 - [elicitation-acp](https://github.com/runloopai/remote-agents-sdk/blob/main/examples/feature-examples/src/use-cases/elicitation-acp.ts) — Handle agent-initiated user input via ACP session_elicitation (acp)
 - [elicitation-claude](https://github.com/runloopai/remote-agents-sdk/blob/main/examples/feature-examples/src/use-cases/elicitation-claude.ts) — Handle agent-initiated user input via Claude conversational flow (claude)
-- [single-prompt](https://github.com/runloopai/remote-agents-sdk/blob/main/examples/feature-examples/src/use-cases/single-prompt.ts) — Send one prompt, receive text response (acp + claude + codex)
+- [session-resume-pi](https://github.com/runloopai/remote-agents-sdk/blob/main/examples/feature-examples/src/use-cases/session-resume-pi.ts) — Resume a persisted session by file path and verify context is preserved (pi)
+- [single-prompt](https://github.com/runloopai/remote-agents-sdk/blob/main/examples/feature-examples/src/use-cases/single-prompt.ts) — Send one prompt, receive text response (acp + claude + codex + pi)
 - [thread-resume-codex](https://github.com/runloopai/remote-agents-sdk/blob/main/examples/feature-examples/src/use-cases/thread-resume-codex.ts) — Resume a server-side thread by id and verify context is preserved (codex)
 
 ## Compatibility
@@ -31,7 +32,7 @@ https://github.com/runloopai/remote-agents-sdk/blob/main/examples/feature-exampl
 
 ## Implementation Notes
 
-- Call `connect()` before `initialize()` (required for ACP, Claude, and Codex).
+- Call `connect()` before `initialize()` (ACP/Claude/Codex; Pi has no initialize step).
 - Use SDK type guards instead of raw Axon payloads.
 - Prefer Agent Gateway for secrets; MCP Gateway for MCP endpoints; Network Policy for egress.
 - Node >= 22 required.

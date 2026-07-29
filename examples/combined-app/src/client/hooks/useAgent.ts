@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { useClaudeAgent } from "./useClaudeAgent.js";
 import { useACPAgent } from "./useACPAgent.js";
 import { useCodexAgent } from "./useCodexAgent.js";
+import { usePiAgent } from "./usePiAgent.js";
 import type { AgentType, IdleAgentState, UseAgentReturn } from "../types.js";
 
 const NOOP_ASYNC = async () => {};
@@ -36,6 +37,7 @@ export function useAgent(agentId: string | null, agentType: AgentType | null): U
   const claude = useClaudeAgent(agentType === "claude" ? agentId : null);
   const acp = useACPAgent(agentType === "acp" ? agentId : null);
   const codex = useCodexAgent(agentType === "codex" ? agentId : null);
+  const pi = usePiAgent(agentType === "pi" ? agentId : null);
 
   const shutdown = useCallback(async () => {
     if (agentType === "claude") {
@@ -44,8 +46,10 @@ export function useAgent(agentId: string | null, agentType: AgentType | null): U
       await acp.shutdown();
     } else if (agentType === "codex") {
       await codex.shutdown();
+    } else if (agentType === "pi") {
+      await pi.shutdown();
     }
-  }, [agentType, claude.shutdown, acp.shutdown, codex.shutdown]);
+  }, [agentType, claude.shutdown, acp.shutdown, codex.shutdown, pi.shutdown]);
 
   if (agentType === "claude") {
     const { shutdown: _, ...rest } = claude;
@@ -62,6 +66,16 @@ export function useAgent(agentId: string | null, agentType: AgentType | null): U
     return {
       ...rest,
       agentType: "codex" as const,
+      shutdown,
+      availableCommands: [],
+    };
+  }
+
+  if (agentType === "pi") {
+    const { shutdown: _, ...rest } = pi;
+    return {
+      ...rest,
+      agentType: "pi" as const,
       shutdown,
       availableCommands: [],
     };

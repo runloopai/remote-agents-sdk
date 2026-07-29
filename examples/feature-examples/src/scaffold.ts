@@ -2,6 +2,7 @@ import { RunloopSDK, type Secret } from "@runloop/api-client";
 import { ACPAxonConnection, PROTOCOL_VERSION } from "@runloop/remote-agents-sdk/acp";
 import { ClaudeAxonConnection } from "@runloop/remote-agents-sdk/claude";
 import { CodexAxonConnection } from "@runloop/remote-agents-sdk/codex";
+import { PiAxonConnection } from "@runloop/remote-agents-sdk/pi";
 import type { AgentConfig, AgentConfigOverride, BrokerMount, UseCase, RunContext } from "./types.js";
 import { SkipError } from "./types.js";
 import { withTimeout } from "./validator.js";
@@ -15,6 +16,14 @@ const DEFAULT_WORKING_DIRECTORY = "/home/user";
 const SETUP_STEP_TIMEOUT_MS = 30_000;
 const SETUP_ERROR_CLEANUP_TIMEOUT_MS = 10_000;
 const DEVBOX_PROVISION_TIMEOUT_MS = 180_000; // 3 minutes for cold start with agent mounts
+
+// Pi resolves custom providers from ~/.pi/agent/models.json. `apiKey` keeps the
+// literal "$NEBIUS_API_KEY" because Pi interpolates $ENV_VAR itself, so the key
+// never lands in the file — only the env var name does. python3's json.dumps
+// handles any characters in the base URL safely; hand-assembling JSON in shell
+// would break on quotes and backslashes.
+const WRITE_PI_MODELS_CMD =
+  'mkdir -p "$HOME/.pi/agent" && umask 077 && python3 -c \'import json, os; print(json.dumps({"providers": {"nebius": {"baseUrl": os.environ["NEBIUS_BASE_URL"], "api": "openai-completions", "apiKey": "$NEBIUS_API_KEY", "models": [{"id": "glm-5.2", "name": "GLM 5.2 (Nebius)", "reasoning": True, "contextWindow": 262144, "maxTokens": 32000}], "compat": {"thinkingFormat": "zai"}}}}))\' > "$HOME/.pi/agent/models.json"';
 
 /**
  * Provision a devbox with secrets, then initialize a connection.
@@ -94,6 +103,11 @@ export async function setup(agent: AgentConfig, useCase: UseCase): Promise<Setup
             'mkdir -p "$HOME/.codex" && umask 077 && python3 -c \'import json, os; print(json.dumps({"auth_mode": "apikey", "OPENAI_API_KEY": os.environ["OPENAI_API_KEY"]}))\' > "$HOME/.codex/auth.json"',
           ],
         }),
+        // Pi reads the nebius/glm-5.2 provider from ~/.pi/agent/models.json,
+        // so materialize it before the broker spawns `pi`.
+        ...(mergedAgent.protocol === "pi" && {
+          launch_commands: [WRITE_PI_MODELS_CMD],
+        }),
       },
     },
     { longPoll: { timeoutMs: DEVBOX_PROVISION_TIMEOUT_MS } },
@@ -161,6 +175,7 @@ export async function setup(agent: AgentConfig, useCase: UseCase): Promise<Setup
         acp: conn,
         claude: null,
         codex: null,
+        pi: null,
         sessionId: session.sessionId,
         log,
         skip: (reason: string) => {
@@ -186,6 +201,32 @@ export async function setup(agent: AgentConfig, useCase: UseCase): Promise<Setup
         acp: null,
         claude: null,
         codex: conn,
+        pi: null,
+        sessionId: null,
+        log,
+        skip: (reason: string) => {
+          throw new SkipError(reason);
+        },
+        cleanup,
+      };
+
+      return { ctx, sdk };
+    }
+
+    if (mergedAgent.protocol === "pi") {
+      const conn = new PiAxonConnection(axon, devbox);
+
+      log("Connecting (Pi)...");
+      await withTimeout(conn.connect(), SETUP_STEP_TIMEOUT_MS, "Pi connect");
+
+      // Pi has no handshake — the broker issues `get_state` at spawn and after
+      // every turn, so there is deliberately no initialize() step here.
+      const ctx: RunContext = {
+        agent: mergedAgent,
+        acp: null,
+        claude: null,
+        codex: null,
+        pi: conn,
         sessionId: null,
         log,
         skip: (reason: string) => {
@@ -210,6 +251,7 @@ export async function setup(agent: AgentConfig, useCase: UseCase): Promise<Setup
       acp: null,
       claude: conn,
       codex: null,
+      pi: null,
       sessionId: null,
       log,
       skip: (reason: string) => {
@@ -238,6 +280,9 @@ export async function disconnect(ctx: RunContext): Promise<void> {
   } else if (ctx.codex) {
     ctx.log("Disconnecting Codex...");
     await ctx.codex.disconnect();
+  } else if (ctx.pi) {
+    ctx.log("Disconnecting Pi...");
+    await ctx.pi.disconnect();
   }
 }
 
@@ -274,6 +319,7 @@ function validateConfig(agent: AgentConfig): void {
     acp: "acp",
     claude: "claude_json",
     codex: "codex_json",
+    pi: "pi_json",
   } as const;
   const expectedBrokerProtocol = brokerProtocolByClientProtocol[agent.protocol];
   if (agent.brokerMount.protocol !== expectedBrokerProtocol) {
@@ -335,8 +381,8 @@ function buildBrokerMount(
   return {
     type: "broker_mount" as const,
     axon_id: axonId,
-    // The broker accepts protocol "codex_json", but the published
-    // @runloop/api-client mount types don't include it yet.
+    // The broker accepts protocols "codex_json" and "pi_json", but the
+    // published @runloop/api-client mount types don't include either yet.
     protocol: config.protocol as "acp" | "claude_json",
     ...(config.agentBinary && { agent_binary: config.agentBinary }),
     ...(config.launchArgs && { launch_args: config.launchArgs }),

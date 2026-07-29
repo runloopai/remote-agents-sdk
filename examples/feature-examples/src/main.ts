@@ -17,6 +17,10 @@ const FEATURE_EXAMPLES_DIR = resolve(__dirname, "..");
 const TEMPLATES_DIR = resolve(FEATURE_EXAMPLES_DIR, "templates");
 const SDK_PACKAGE_JSON = resolve(REPO_ROOT, "sdk/package.json");
 
+/** Selectable protocols, in the column order of compatibility.md.template. */
+const PROTOCOLS = ["acp", "claude", "codex", "pi"] as const;
+type Protocol = (typeof PROTOCOLS)[number];
+
 async function getSdkVersion(): Promise<string> {
   const content = await readFile(SDK_PACKAGE_JSON, "utf-8");
   const pkg = JSON.parse(content) as { version: string };
@@ -55,7 +59,7 @@ Usage: bun run feature-compat [options]
 
 Options:
   --agent <name>       Run only for this agent (default: all)
-  --protocol <proto>   Run only for this protocol: acp, claude, codex (default: all)
+  --protocol <proto>   Run only for this protocol: acp, claude, codex, pi (default: all)
   --use-case <name>    Run only this use case (default: all)
   --parallel <n>       Max concurrent devboxes (default: 5)
   --timeout <ms>       Default timeout per use case, capped at 30000 (default: 10000)
@@ -236,27 +240,14 @@ function aggregateProtocolStatus(results: RunResult[]): RunResult["status"] | "p
 function buildProtocolFeatureRows(results: RunResult[], useCases: UseCase[]): string {
   let rows = "";
   for (const uc of useCases) {
-    const acpResults = results.filter(
-      (r) => r.useCase === uc.name && r.protocol === "acp",
-    );
-    const claudeResults = results.filter(
-      (r) => r.useCase === uc.name && r.protocol === "claude",
-    );
-    const codexResults = results.filter(
-      (r) => r.useCase === uc.name && r.protocol === "codex",
-    );
+    const cells = PROTOCOLS.map((protocol) => {
+      if (!uc.protocols.includes(protocol)) return "N/A";
+      return aggregateProtocolStatus(
+        results.filter((r) => r.useCase === uc.name && r.protocol === protocol),
+      );
+    });
 
-    const acpStatus = uc.protocols.includes("acp")
-      ? aggregateProtocolStatus(acpResults)
-      : "N/A";
-    const claudeStatus = uc.protocols.includes("claude")
-      ? aggregateProtocolStatus(claudeResults)
-      : "N/A";
-    const codexStatus = uc.protocols.includes("codex")
-      ? aggregateProtocolStatus(codexResults)
-      : "N/A";
-
-    rows += `| ${uc.name} | ${acpStatus} | ${claudeStatus} | ${codexStatus} |\n`;
+    rows += `| ${uc.name} | ${cells.join(" | ")} |\n`;
   }
   return rows.trimEnd();
 }
@@ -486,9 +477,9 @@ async function main(): Promise<void> {
   }
 
   if (args.protocol) {
-    if (args.protocol !== "acp" && args.protocol !== "claude" && args.protocol !== "codex") {
+    if (!PROTOCOLS.includes(args.protocol as Protocol)) {
       console.error(`Unknown protocol: ${args.protocol}`);
-      console.error("Available: acp, claude, codex");
+      console.error(`Available: ${PROTOCOLS.join(", ")}`);
       process.exit(1);
     }
     filteredAgents = filteredAgents.filter((a) => a.protocol === args.protocol);

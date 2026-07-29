@@ -28,12 +28,19 @@ import type {
   SDKSystemMessage,
 } from "@runloop/remote-agents-sdk/claude";
 import type { CodexProtocolTimelineEvent } from "@runloop/remote-agents-sdk/codex";
+import type { PiProtocolTimelineEvent } from "@runloop/remote-agents-sdk/pi";
 import type { AgentStartedPayload, TimelineEvent } from "../types.js";
 import { PayloadTree, formatTime, originLabel, originBadgeClass } from "./shared.js";
 
 const isAgentStartedEvent = createCustomEventGuard<AgentStartedPayload>("agent_started");
 
-type TimelineKind = "system" | "acp_protocol" | "claude_protocol" | "codex_protocol" | "unknown";
+type TimelineKind =
+  | "system"
+  | "acp_protocol"
+  | "claude_protocol"
+  | "codex_protocol"
+  | "pi_protocol"
+  | "unknown";
 
 interface TimelineSummary {
   icon: string;
@@ -172,6 +179,53 @@ function summarizeCodexProtocol(event: CodexProtocolTimelineEvent): TimelineSumm
   }
 }
 
+function summarizePiProtocol(event: PiProtocolTimelineEvent): TimelineSummary {
+  switch (event.eventType) {
+    case "agent_start":
+      return { icon: "\u{1F195}", label: "agent_start", summary: "", kindClass: "kind-protocol" };
+    case "turn_start":
+      return { icon: "▶️", label: "turn_start", summary: "", kindClass: "kind-protocol" };
+    case "turn_end":
+      return { icon: "✅", label: "turn_end", summary: "", kindClass: "kind-protocol" };
+    case "message_start":
+    case "message_end":
+      return { icon: "\u{1F4E6}", label: event.eventType, summary: event.data.message.role, kindClass: "kind-protocol" };
+    case "message_update": {
+      const delta = event.data.assistantMessageEvent;
+      switch (delta.type) {
+        case "text_delta":
+          return { icon: "\u{1F916}", label: "text_delta", summary: delta.delta.slice(0, 40), kindClass: "kind-protocol" };
+        case "thinking_delta":
+          return { icon: "\u{1F4AD}", label: "thinking_delta", summary: "", kindClass: "kind-protocol" };
+        case "error":
+          return { icon: "⚠️", label: "message error", summary: delta.reason, kindClass: "kind-system" };
+        default:
+          return { icon: "\u{1F4E6}", label: delta.type, summary: "", kindClass: "kind-protocol" };
+      }
+    }
+    case "tool_execution_start":
+    case "tool_execution_update":
+    case "tool_execution_end":
+      return { icon: "\u{1F527}", label: event.eventType, summary: event.data.toolName, kindClass: "kind-protocol" };
+    case "agent_end":
+      // Not a turn boundary: `willRetry` means Pi keeps going.
+      return { icon: "⏸️", label: "agent_end", summary: event.data.willRetry ? "willRetry" : "", kindClass: "kind-protocol" };
+    case "agent_settled":
+      return { icon: "⏹️", label: "agent_settled", summary: "", kindClass: "kind-protocol" };
+    case "response": {
+      const { command, success, error } = event.data;
+      return {
+        icon: success ? "✅" : "⚠️",
+        label: `response ${command}`,
+        summary: success ? "" : (error ?? "failed"),
+        kindClass: success ? "kind-protocol" : "kind-system",
+      };
+    }
+    default:
+      return { icon: "\u{1F4E6}", label: (event as { eventType: string }).eventType, summary: "", kindClass: "kind-protocol" };
+  }
+}
+
 function summarizeTimelineEvent(event: TimelineEvent): TimelineSummary {
   if (isTurnStartedEvent(event)) {
     return { icon: "\u25B6\uFE0F", label: "turn.started", summary: "", kindClass: "kind-system" };
@@ -204,6 +258,8 @@ function summarizeTimelineEvent(event: TimelineEvent): TimelineSummary {
       return summarizeClaudeProtocol(event);
     case "codex_protocol":
       return summarizeCodexProtocol(event);
+    case "pi_protocol":
+      return summarizePiProtocol(event);
     case "unknown": {
       if (isAgentStartedEvent(event)) {
         return { icon: "\u2699\uFE0F", label: "Agent Started", summary: event.data.agentType ?? "", kindClass: "kind-custom" };
@@ -226,6 +282,7 @@ function kindBadgeLabel(kind: TimelineKind, custom: boolean): string {
     case "acp_protocol": return "ACP";
     case "claude_protocol": return "CLAUDE";
     case "codex_protocol": return "CODEX";
+    case "pi_protocol": return "PI";
     case "unknown": return "?";
   }
 }
@@ -237,6 +294,7 @@ function kindBadgeClass(kind: TimelineKind, custom: boolean): string {
     case "acp_protocol": return "tl-kind-acp";
     case "claude_protocol": return "tl-kind-claude";
     case "codex_protocol": return "tl-kind-codex";
+    case "pi_protocol": return "tl-kind-pi";
     case "unknown": return "tl-kind-unknown";
   }
 }

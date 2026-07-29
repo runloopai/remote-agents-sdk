@@ -4,7 +4,7 @@ Runnable SDK recipes demonstrating individual features of `@runloop/remote-agent
 
 ## Prerequisites
 
-Most use cases run against `runloop/starter-x86_64` using the **agent-mount** install strategy. The `agent-via-blueprint` use case demonstrates the **blueprint** install strategy where agents are pre-baked into a custom image. Build the shared `axon-agents` blueprint once before running the full suite:
+Most use cases run against `runloop/starter-x86_64` using the **agent-mount** install strategy. The `agent-via-blueprint` use case demonstrates the **blueprint** install strategy where agents are pre-baked into a custom image, and the `pi` agent always uses it (Pi has no catalog agent mount). Build the shared `axon-agents` blueprint once before running the full suite:
 
 ```bash
 bun run build-blueprint

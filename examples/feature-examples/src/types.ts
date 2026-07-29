@@ -1,6 +1,7 @@
 import type { ACPAxonConnection } from "@runloop/remote-agents-sdk/acp";
 import type { ClaudeAxonConnection } from "@runloop/remote-agents-sdk/claude";
 import type { CodexAxonConnection } from "@runloop/remote-agents-sdk/codex";
+import type { PiAxonConnection } from "@runloop/remote-agents-sdk/pi";
 import type { Client, Agent } from "@agentclientprotocol/sdk";
 
 /**
@@ -20,8 +21,11 @@ export type InstallStrategy =
  * Maps directly to the Runloop `broker_mount` API shape.
  */
 export interface BrokerMount {
-  /** Broker protocol: "acp" for ACP agents, "claude_json" for Claude Code, "codex_json" for native Codex. */
-  protocol: "acp" | "claude_json" | "codex_json";
+  /**
+   * Broker protocol: "acp" for ACP agents, "claude_json" for Claude Code,
+   * "codex_json" for native Codex, "pi_json" for native Pi.
+   */
+  protocol: "acp" | "claude_json" | "codex_json" | "pi_json";
   /** Path or name of the agent binary. */
   agentBinary?: string;
   /** CLI args passed to the agent binary. */
@@ -38,7 +42,7 @@ export interface AgentConfig {
   name: string;
 
   /** Which protocol this agent uses (client-side). */
-  protocol: "acp" | "claude" | "codex";
+  protocol: "acp" | "claude" | "codex" | "pi";
 
   /** How to install the agent on the devbox. */
   install: InstallStrategy;
@@ -96,7 +100,7 @@ export interface UseCase {
   description: string;
 
   /** Which protocols this use case applies to. */
-  protocols: Array<"acp" | "claude" | "codex">;
+  protocols: Array<"acp" | "claude" | "codex" | "pi">;
 
   /** Per-use-case timeout in ms. Overrides the default. */
   timeoutMs?: number;
@@ -145,16 +149,19 @@ export interface RunContext {
   /** The agent config used for this run. */
   agent: AgentConfig;
 
-  /** ACP connection, or null if this is a Claude run. */
+  /** ACP connection, or null when another protocol is in use. */
   acp: ACPAxonConnection | null;
 
-  /** Claude connection, or null if this is an ACP or Codex run. */
+  /** Claude connection, or null when another protocol is in use. */
   claude: ClaudeAxonConnection | null;
 
-  /** Codex connection, or null if this is an ACP or Claude run. */
+  /** Codex connection, or null when another protocol is in use. */
   codex: CodexAxonConnection | null;
 
-  /** ACP session ID, or null for Claude/Codex (implicit session). */
+  /** Pi connection, or null when another protocol is in use. */
+  pi: PiAxonConnection | null;
+
+  /** ACP session ID, or null for Claude/Codex/Pi (implicit session). */
   sessionId: string | null;
 
   /** Log a message (appears in run output). */
@@ -181,7 +188,7 @@ export interface RunResult {
   useCase: string;
 
   /** Protocol used (e.g., "acp"). */
-  protocol: "acp" | "claude" | "codex";
+  protocol: "acp" | "claude" | "codex" | "pi";
 
   /** Outcome. */
   status: "pass" | "fail" | "skip" | "xfail" | "xpass";

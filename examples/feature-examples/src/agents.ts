@@ -3,9 +3,10 @@ import type { AgentConfig } from "./types.js";
 /**
  * Default agent configurations.
  *
- * All agents use the "agent-mount" install strategy: a starter blueprint +
- * agent mount to install the agent at provision time. API keys are injected
- * via secrets in scaffold.ts, not here.
+ * Every agent except `pi` uses the "agent-mount" install strategy: a starter
+ * blueprint + agent mount to install the agent at provision time. `pi` has no
+ * catalog mount and comes pre-baked in the `axon-agents` blueprint. API keys
+ * are injected via secrets in scaffold.ts, not here.
  */
 export const AGENTS: AgentConfig[] = [
   {
@@ -85,6 +86,29 @@ export const AGENTS: AgentConfig[] = [
       launchArgs: ["--experimental-acp", "--yolo"],
     },
     secrets: { GEMINI_API_KEY: "GEMINI_API_KEY" },
+  },
+  {
+    name: "pi",
+    protocol: "pi",
+    // Pi has no catalog agent mount, so it comes from the `axon-agents`
+    // blueprint (see examples/blueprint/Dockerfile, which pins 0.82.1).
+    install: { kind: "blueprint", blueprint: "axon-agents" },
+    brokerMount: {
+      protocol: "pi_json",
+      agentBinary: "pi",
+      workingDirectory: "/home/user",
+      // `--mode rpc` and `--session-dir` are broker-owned: the broker appends
+      // both, and `--session-dir` must point at the durable state root for
+      // resume to survive devbox snapshots. Never set either here.
+      launchArgs: ["--model", "nebius/glm-5.2"],
+    },
+    // NEBIUS_BASE_URL is Runloop's dedicated endpoint, not a public URL, so it
+    // travels through the secret mechanism too — that keeps it out of the repo
+    // and makes a missing value a clean skip instead of a confusing failure.
+    secrets: {
+      NEBIUS_API_KEY: "NEBIUS_API_KEY",
+      NEBIUS_BASE_URL: "NEBIUS_BASE_URL",
+    },
   },
   {
     name: "claude-code",

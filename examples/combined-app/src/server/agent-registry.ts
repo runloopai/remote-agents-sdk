@@ -2,10 +2,11 @@ import { randomUUID } from "node:crypto";
 import type { ClaudeConnectionManager } from "./claude-manager.ts";
 import type { ACPConnectionManager } from "./acp-manager.ts";
 import type { CodexConnectionManager } from "./codex-manager.ts";
+import type { PiConnectionManager } from "./pi-manager.ts";
 
 export interface AgentEntry {
   id: string;
-  agentType: "claude" | "acp" | "codex";
+  agentType: "claude" | "acp" | "codex" | "pi";
   name: string;
   axonId: string;
   devboxId: string;
@@ -13,11 +14,12 @@ export interface AgentEntry {
   claudeManager?: ClaudeConnectionManager;
   acpManager?: ACPConnectionManager;
   codexManager?: CodexConnectionManager;
+  piManager?: PiConnectionManager;
 }
 
 export interface AgentListItem {
   id: string;
-  agentType: "claude" | "acp" | "codex";
+  agentType: "claude" | "acp" | "codex" | "pi";
   name: string;
   axonId: string;
   devboxId: string;
@@ -60,6 +62,7 @@ export class AgentRegistry {
     if (entry.claudeManager) await entry.claudeManager.shutdown();
     if (entry.acpManager) await entry.acpManager.shutdown();
     if (entry.codexManager) await entry.codexManager.shutdown();
+    if (entry.piManager) await entry.piManager.shutdown();
     this.agents.delete(id);
   }
 

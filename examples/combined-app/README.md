@@ -2,7 +2,7 @@
 
 > **Alpha — subject to change.** This example uses an SDK in early development. APIs and behavior may change without notice between versions.
 
-A full-stack demo that supports ACP, Claude Code, and Codex agents running in Runloop devboxes. An Express backend manages agent connections (one per protocol) and fans out SDK timeline events to a React frontend over a single WebSocket. Multiple agents can run concurrently.
+A full-stack demo that supports ACP, Claude Code, Codex, and Pi agents running in Runloop devboxes. An Express backend manages agent connections (one per protocol) and fans out SDK timeline events to a React frontend over a single WebSocket. Multiple agents can run concurrently.
 
 ## Prerequisites
 
@@ -10,6 +10,7 @@ A full-stack demo that supports ACP, Claude Code, and Codex agents running in Ru
 - A [Runloop](https://runloop.ai) API key
 - An [Anthropic](https://anthropic.com) API key (required for Claude agents)
 - An [OpenAI](https://platform.openai.com) API key (required for Codex agents)
+- A Nebius API key and base URL (required for Pi agents, which run GLM-5.2 on Runloop's dedicated Nebius endpoint)
 - The `@runloop/remote-agents-sdk` SDK built locally (`cd ../../sdk && bun run build`)
 
 ## Setup
@@ -29,7 +30,14 @@ Add your keys to `.env`:
 RUNLOOP_API_KEY=your_runloop_api_key
 ANTHROPIC_API_KEY=your_anthropic_api_key
 OPENAI_API_KEY=your_openai_api_key
+NEBIUS_API_KEY=your_nebius_api_key
+NEBIUS_BASE_URL=your_nebius_endpoint_url
 ```
+
+Pi agents read `NEBIUS_API_KEY` and `NEBIUS_BASE_URL` from the devbox
+environment. At launch the server writes `~/.pi/agent/models.json` declaring a
+`nebius` provider whose `apiKey` is the literal `"$NEBIUS_API_KEY"`, which Pi
+interpolates from the environment — the key itself is never written to disk.
 
 Codex agents authenticate via a `~/.codex/auth.json` written into the devbox at
 launch. By default it's generated in api-key mode from `OPENAI_API_KEY`. To use
@@ -42,7 +50,7 @@ CODEX_AUTH_JSON="$(cat ~/.codex/auth.json)"
 
 ### Build the shared blueprint (one-time, required)
 
-This example provisions devboxes with `blueprint_name: "axon-agents"` (see [`src/server/acp-manager.ts`](src/server/acp-manager.ts), [`src/server/claude-manager.ts`](src/server/claude-manager.ts), and [`src/server/codex-manager.ts`](src/server/codex-manager.ts)). That blueprint must exist on your Runloop account before starting an agent from the UI — otherwise `POST /api/start` will fail when creating the devbox. Codex agents require a blueprint built after the Codex CLI was added to the [`Dockerfile`](../blueprint/Dockerfile) — re-run the command below if your `axon-agents` image predates it.
+This example provisions devboxes with `blueprint_name: "axon-agents"` (see [`src/server/acp-manager.ts`](src/server/acp-manager.ts), [`src/server/claude-manager.ts`](src/server/claude-manager.ts), and [`src/server/codex-manager.ts`](src/server/codex-manager.ts), and [`src/server/pi-manager.ts`](src/server/pi-manager.ts)). That blueprint must exist on your Runloop account before starting an agent from the UI — otherwise `POST /api/start` will fail when creating the devbox. Codex and Pi agents require a blueprint built after their CLIs were added to the [`Dockerfile`](../blueprint/Dockerfile) — re-run the command below if your `axon-agents` image predates them.
 
 From the monorepo root:
 
@@ -66,8 +74,8 @@ Open http://localhost:5176. The Vite dev server proxies `/api/*` and `/ws` to th
 
 ## How It Works
 
-1. **Start an agent** — the setup card lets you choose ACP, Claude, or Codex, configure the agent binary / blueprint, and optionally set a system prompt. `POST /api/start` provisions an Axon channel and devbox, then opens the appropriate SDK connection (`ACPAxonConnection`, `ClaudeAxonConnection`, or `CodexAxonConnection`).
-2. **Send a prompt** — `POST /api/prompt` dispatches to the active connection's `prompt()` (ACP) or `send()` (Claude/Codex) and returns immediately.
+1. **Start an agent** — the setup card lets you choose ACP, Claude, Codex, or Pi, configure the agent binary / blueprint, and optionally set a system prompt. `POST /api/start` provisions an Axon channel and devbox, then opens the appropriate SDK connection (`ACPAxonConnection`, `ClaudeAxonConnection`, `CodexAxonConnection`, or `PiAxonConnection`).
+2. **Send a prompt** — `POST /api/prompt` dispatches to the active connection's `prompt()` (ACP) or `send()` (Claude/Codex/Pi) and returns immediately. For Pi, `send()` resolves once the prompt is *accepted*; the turn ends only when `agent_settled` arrives.
 3. **Stream events** — the SDK's `onTimelineEvent` callback fires for every classified event (protocol messages, system turns, unknowns). The server broadcasts each event over WebSocket with an `agentId` tag.
 4. **Render blocks** — the React client filters events by `agentId`, builds incremental turn blocks (`useBlockManager`), and renders them through `AssistantTurn` / `TurnBlocks`.
 
@@ -84,6 +92,7 @@ src/
 │   ├── acp-client.ts        ACP Client implementation (permissions, elicitation)
 │   ├── claude-manager.ts    Claude connection lifecycle
 │   ├── codex-manager.ts     Codex connection lifecycle (threads, approvals)
+│   ├── pi-manager.ts        Pi connection lifecycle (sessions, steer/follow-up)
 │   └── agent-registry.ts    Multi-agent bookkeeping
 └── client/
     ├── main.tsx             React entry point
@@ -94,6 +103,7 @@ src/
     │   ├── useACPAgent.ts   ACP event handling and state
     │   ├── useClaudeAgent.ts Claude event handling and state
     │   ├── useCodexAgent.ts Codex event handling and state (items, approvals)
+│   ├── usePiAgent.ts    Pi event handling and state (streaming deltas, tools)
     │   ├── useBlockManager.ts Turn block accumulation
     │   ├── useAgentList.ts  Agent list polling
     │   ├── useAttachments.ts File/image attachment handling
