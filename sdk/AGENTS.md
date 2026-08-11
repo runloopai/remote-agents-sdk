@@ -241,7 +241,7 @@ await conn.disconnect();
 | `startReview(target?, delivery?)` | Start a Codex review (`review/start`); defaults to uncommitted changes |
 | `compactThread()` | Compact the active thread's context (`thread/compact/start`) |
 | `readConfig(params?)` | Read the app-server's effective config (`config/read`) |
-| `onApprovalRequest(method, handler)` | Handle server-initiated approval requests (returns unsubscribe fn) |
+| `onApprovalRequest(method, handler)` | Handle server-initiated approval or MCP elicitation requests (returns unsubscribe fn) |
 | `threadId` | The active thread id (`string \| undefined`) |
 | `onAxonEvent(listener)` | Subscribe to all Axon events (returns unsubscribe fn) |
 | `onTimelineEvent(listener)` | Subscribe to classified timeline events (returns unsubscribe fn) |
@@ -385,7 +385,7 @@ create a new instance.
 - **Auto-reconnect (single retry).** If an SSE stream drops unexpectedly, the SDK re-subscribes once. ACP logs a `console.warn`; Claude logs only when `verbose: true` is set. If the retry also fails, the connection is terminal — create a new instance.
 - **ACP permissions default to auto-approve** (`allow_always` > `allow_once` > first option). Pass `requestPermission` to customize.
 - **Claude permissions also auto-approve** all tool use. Register a `"can_use_tool"` handler via `onControlRequest()` to customize.
-- **Codex approvals also auto-approve** by default. Register handlers via `onApprovalRequest()` to customize, or mount with `launch_args: ["-c", "approval_policy=never"]` for headless full-auto (no approval traffic at all).
+- **Codex approvals auto-approve, while MCP elicitations cancel safely** by default. Register handlers via `onApprovalRequest()` to customize, or mount with `launch_args: ["-c", "approval_policy=never"]` for headless full-auto.
 - **Explicit `connect()` required:** All connections require `await conn.connect()` first, followed by `initialize()` — ACP, Claude, and Codex alike.
 - **Node >= 22** required.
 - **`@runloop/api-client`** is a peer dep — you must install it yourself.

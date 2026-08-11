@@ -52,8 +52,17 @@ export class CodexAxonTransport implements CodexTransport {
       resolveEventType: (frame) => frame?.method ?? RESPONSE_EVENT_TYPE,
       isReplayRequest: (event, frame) => isFromAgent(event) && !!frame.method && frame.id != null,
       requestId: (frame) => frame.id,
-      isReplayAnswer: (event) => isFromUser(event) && event.event_type === RESPONSE_EVENT_TYPE,
-      answerId: (frame) => frame.id,
+      isReplayAnswer: (event) =>
+        (isFromUser(event) && event.event_type === RESPONSE_EVENT_TYPE) ||
+        (isFromAgent(event) && event.event_type === "serverRequest/resolved"),
+      answerId: (frame) => {
+        if (frame.id != null) return frame.id;
+        if (frame.method !== "serverRequest/resolved") return undefined;
+        const requestId = (frame.params as { requestId?: unknown } | undefined)?.requestId;
+        return typeof requestId === "string" || typeof requestId === "number"
+          ? requestId
+          : undefined;
+      },
       validateOutbound: (frame) => {
         if (typeof frame.id === "string" && frame.id.startsWith(RESERVED_REQUEST_ID_PREFIX))
           throw new Error(`Request IDs beginning with ${RESERVED_REQUEST_ID_PREFIX} are reserved`);
