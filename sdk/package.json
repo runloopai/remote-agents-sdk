@@ -66,6 +66,7 @@
   "scripts": {
     "typecheck": "tsc --project tsconfig.check.json",
     "build": "tsc",
+    "prepare": "tsc",
     "dev": "tsc --watch",
     "prepublishOnly": "rm -rf dist && tsc",
     "lint": "biome lint ./src",
