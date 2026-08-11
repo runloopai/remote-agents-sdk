@@ -325,8 +325,7 @@ export class CodexAxonConnection {
     this.closed = true;
     this.abortController.abort();
     this.pending.rejectAll(new Error("Client disconnected"));
-    for (const resolveRequest of this.serverRequestResolutionWaiters.values()) resolveRequest();
-    this.serverRequestResolutionWaiters.clear();
+    this.resolveParkedServerRequests();
     this.messageQueue.close();
     await this.transport?.close();
     this.transport = undefined;
@@ -368,6 +367,7 @@ export class CodexAxonConnection {
       },
       onTerminalError: (error) => this.pending.rejectAll(error),
       onFinished: () => {
+        this.resolveParkedServerRequests();
         this.running = false;
         this.abortController.abort();
         this.messageQueue.close(false);
@@ -397,6 +397,12 @@ export class CodexAxonConnection {
     const requestId = (frame.params as { requestId?: unknown } | undefined)?.requestId;
     if (typeof requestId !== "string" && typeof requestId !== "number") return;
     this.serverRequestResolutionWaiters.get(requestId)?.();
+  }
+  private resolveParkedServerRequests(): void {
+    for (const resolveRequest of [...this.serverRequestResolutionWaiters.values()]) {
+      resolveRequest();
+    }
+    this.serverRequestResolutionWaiters.clear();
   }
   private route(frame: CodexFrame): void {
     this.captureThreadStarted(frame);
@@ -475,6 +481,7 @@ export class CodexAxonConnection {
         else resolve(value);
       };
       const onResolved = () => finish(SERVER_REQUEST_RESOLVED);
+      this.serverRequestResolutionWaiters.get(request.id)?.();
       this.serverRequestResolutionWaiters.set(request.id, onResolved);
       timer = setTimeout(() => finish(this.defaultDecline(request)), timeoutMs);
       Promise.resolve()

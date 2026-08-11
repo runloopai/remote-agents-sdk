@@ -421,6 +421,31 @@ describe("CodexAxonConnection", () => {
     expect(handlerSignal?.aborted).toBe(true);
   });
 
+  it("replaces a stale parked handler when the same request is replayed", async () => {
+    const { ctrl, mock, conn } = setup({ requestTimeoutMs: 1_000 });
+    const signals: AbortSignal[] = [];
+    conn.onApprovalRequest("mcpServer/elicitation/request", (_request, context) => {
+      signals.push(context.signal);
+      return new Promise(() => undefined);
+    });
+    await conn.connect();
+    const request = {
+      method: "mcpServer/elicitation/request",
+      id: "elicit-replayed",
+      params: { mode: "form", message: "Which city?", requestedSchema: {} },
+    };
+
+    ctrl.push(makeAgentEvent(request.method, request));
+    await tick();
+    ctrl.push(makeAgentEvent(request.method, request));
+    await tick();
+
+    expect(signals).toHaveLength(2);
+    expect(signals[0]?.aborted).toBe(true);
+    expect(signals[1]?.aborted).toBe(false);
+    expect(mock.published).toHaveLength(0);
+  });
+
   it("answers unsupported server requests with a JSON-RPC error", async () => {
     const { ctrl, mock, conn } = setup();
     await conn.connect();
