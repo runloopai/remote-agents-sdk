@@ -158,6 +158,8 @@ function summarizeApproval(request: ApprovalRequest): string {
       return "Apply a patch";
     case "item/tool/requestUserInput":
       return "Tool input requested";
+    case "mcpServer/elicitation/request":
+      return request.params.message;
     case "item/permissions/requestApproval":
       return "Additional permissions requested";
   }
