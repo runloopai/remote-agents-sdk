@@ -575,7 +575,7 @@ Like ACP/Claude, call `initialize()` after `connect()` — it runs the app-serve
 |-------|------|-------------|
 | `verbose` | `boolean` | Emit verbose logs to stderr |
 | `threadStartParams` | `ThreadStartParams` | Defaults for auto-started threads (cwd, model, `sandbox`, `approvalPolicy`, …) |
-| `approvalHandlers` | `Partial<Record<ApprovalMethod, ApprovalHandler>>` | Handlers for server-initiated approval requests (see below) |
+| `approvalHandlers` | `Partial<Record<ApprovalMethod, ApprovalHandler>>` | Handlers for server-initiated approval and elicitation requests (see below) |
 | `requestTimeoutMs` | `number` | Timeout for request/response correlation and approval handlers (default `60000`) |
 | `onError` | `(error: unknown) => void` | Error callback (defaults to `console.error`) |
 | `onDisconnect` | `() => void \| Promise<void>` | Teardown callback invoked by `disconnect()` (e.g. devbox shutdown) |
@@ -622,20 +622,30 @@ Like ACP/Claude, call `initialize()` after `connect()` — it runs the app-serve
 | `onAxonEvent(listener)` | Register an Axon event listener. Returns unsubscribe function. |
 | `onTimelineEvent(listener)` | Register a classified timeline event listener. Returns unsubscribe function. |
 | `receiveTimelineEvents()` | Async generator yielding classified `CodexTimelineEvent`s |
-| `onApprovalRequest(method, handler)` | Register a handler for a server-initiated approval request. Returns unsubscribe function. |
+| `onApprovalRequest(method, handler)` | Register a handler for a server-initiated approval or elicitation request. Returns unsubscribe function. |
 
-### Approval requests
+### Approval and elicitation requests
 
-Codex asks the client before running commands, editing files, or escalating permissions — the server sends a JSON-RPC request (`item/commandExecution/requestApproval`, `item/fileChange/requestApproval`, `item/tool/requestUserInput`, `item/permissions/requestApproval`, or the legacy `execCommandApproval` / `applyPatchApproval`) and waits for the client's response.
+Codex asks the client before running commands, editing files, escalating permissions, or collecting structured input from an MCP server. The server sends a JSON-RPC request (`item/commandExecution/requestApproval`, `item/fileChange/requestApproval`, `item/tool/requestUserInput`, `mcpServer/elicitation/request`, `item/permissions/requestApproval`, or the legacy `execCommandApproval` / `applyPatchApproval`) and waits for the client's response.
 
-By default the SDK **auto-approves**: command/file approvals are accepted, legacy approvals are approved, user-input answers are empty, and requested permissions are granted for the turn. Register a handler to customize; a handler that doesn't answer within `requestTimeoutMs` is treated as a decline.
+By default the SDK **auto-approves approval requests**: command/file approvals are accepted, legacy approvals are approved, user-input answers are empty, and requested permissions are granted for the turn. MCP elicitations default to a safe `cancel` response. Register a handler to customize; a handler that doesn't answer within `requestTimeoutMs` is treated as a decline or cancellation.
 
 ```typescript
 const off = conn.onApprovalRequest("item/commandExecution/requestApproval", (request) => {
   console.log(`Approve command? (item ${request.params.itemId})`);
   return { decision: "accept" }; // or { decision: "decline" }
 });
+
+conn.onApprovalRequest("mcpServer/elicitation/request", (request) => {
+  return {
+    action: "accept",
+    content: { city: "Paris" },
+    _meta: null,
+  };
+});
 ```
+
+Handlers receive a second argument with an `AbortSignal`. The signal aborts when app-server resolves the request elsewhere, the handler times out, or the connection closes, allowing applications to discard parked UI state without publishing a late response. Replay also treats `serverRequest/resolved` as terminal, so reconnecting a client does not re-open an elicitation that Codex already cleared. This recovery applies while the Codex process still owns the request. Restarting Codex destroys its in-memory MCP request, so applications must durably reissue the operation rather than replay only the old response.
 
 Whether approvals fire at all depends on the thread's policy — pass `threadStartParams: { approvalPolicy: "on-request", sandbox: "read-only" }` (or per-call `startThread(params)`) to route actions through the client. For headless full-auto use, skip the approval flow entirely by mounting with `launch_args: ["-c", "approval_policy=never"]`.
 

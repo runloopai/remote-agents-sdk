@@ -63,7 +63,16 @@ export type TurnOptions = Omit<TurnStartParams, "threadId" | "input"> & {
 };
 export type ApprovalMethod = CodexApprovalRequestMethod;
 export type ApprovalRequest = Extract<ServerRequest, { method: ApprovalMethod }>;
-export type ApprovalHandler = (request: ApprovalRequest) => Promise<unknown> | unknown;
+/** Lifecycle context for an approval or elicitation request handler. */
+export interface ApprovalHandlerContext {
+  /** Aborted when Codex resolves the request elsewhere, the handler times out, or the connection closes. */
+  signal: AbortSignal;
+}
+export type ApprovalHandler = (
+  request: ApprovalRequest,
+  context: ApprovalHandlerContext,
+) => Promise<unknown> | unknown;
+const SERVER_REQUEST_RESOLVED = Symbol("server-request-resolved");
 /**
  * JSON-RPC error returned by the Codex app-server for a client request.
  * Preserves the wire `code` and `data` alongside the message.
@@ -145,6 +154,7 @@ export class CodexAxonConnection {
   private readonly axonListeners: ListenerSet<AxonEventListener>;
   private readonly timelineListeners: ListenerSet<TimelineEventListener<CodexTimelineEvent>>;
   private readonly handlers = new Map<string, ApprovalHandler>();
+  private readonly serverRequestResolutionWaiters = new Map<string | number, () => void>();
   private readonly handleError: (error: unknown) => void;
   private readonly log;
   constructor(
@@ -315,6 +325,7 @@ export class CodexAxonConnection {
     this.closed = true;
     this.abortController.abort();
     this.pending.rejectAll(new Error("Client disconnected"));
+    this.resolveParkedServerRequests();
     this.messageQueue.close();
     await this.transport?.close();
     this.transport = undefined;
@@ -356,6 +367,7 @@ export class CodexAxonConnection {
       },
       onTerminalError: (error) => this.pending.rejectAll(error),
       onFinished: () => {
+        this.resolveParkedServerRequests();
         this.running = false;
         this.abortController.abort();
         this.messageQueue.close(false);
@@ -380,9 +392,22 @@ export class CodexAxonConnection {
     if (frame.method === "turn/started") this._currentTurnId = id;
     else if (this._currentTurnId === id) this._currentTurnId = undefined;
   }
+  private captureServerRequestResolved(frame: CodexFrame): void {
+    if (frame.method !== "serverRequest/resolved") return;
+    const requestId = (frame.params as { requestId?: unknown } | undefined)?.requestId;
+    if (typeof requestId !== "string" && typeof requestId !== "number") return;
+    this.serverRequestResolutionWaiters.get(requestId)?.();
+  }
+  private resolveParkedServerRequests(): void {
+    for (const resolveRequest of [...this.serverRequestResolutionWaiters.values()]) {
+      resolveRequest();
+    }
+    this.serverRequestResolutionWaiters.clear();
+  }
   private route(frame: CodexFrame): void {
     this.captureThreadStarted(frame);
     this.captureTurnBoundary(frame);
+    this.captureServerRequestResolved(frame);
     if (!frame.method && frame.id != null) {
       frame.error
         ? this.pending.reject(frame.id, toRequestError(frame.error))
@@ -405,6 +430,8 @@ export class CodexAxonConnection {
         return { decision: "approved" };
       case "item/tool/requestUserInput":
         return { answers: {} };
+      case "mcpServer/elicitation/request":
+        return { action: "cancel", content: null, _meta: null };
       case "item/permissions/requestApproval": {
         const permissions = request.params.permissions;
         return {
@@ -427,6 +454,8 @@ export class CodexAxonConnection {
         return { decision: "denied" };
       case "item/tool/requestUserInput":
         return { answers: {} };
+      case "mcpServer/elicitation/request":
+        return { action: "cancel", content: null, _meta: null };
       case "item/permissions/requestApproval":
         return { permissions: {}, scope: "turn" };
     }
@@ -435,19 +464,32 @@ export class CodexAxonConnection {
     request: ApprovalRequest,
     handler: ApprovalHandler,
     timeoutMs: number,
-  ): Promise<unknown> {
+  ): Promise<unknown | typeof SERVER_REQUEST_RESOLVED> {
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => resolve(this.defaultDecline(request)), timeoutMs);
-      Promise.resolve(handler(request)).then(
-        (value) => {
-          clearTimeout(timer);
-          resolve(value);
-        },
-        (error) => {
-          clearTimeout(timer);
-          reject(error);
-        },
-      );
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const handlerController = new AbortController();
+      const finish = (value: unknown | typeof SERVER_REQUEST_RESOLVED, error?: unknown) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        if (this.serverRequestResolutionWaiters.get(request.id) === onResolved) {
+          this.serverRequestResolutionWaiters.delete(request.id);
+        }
+        handlerController.abort();
+        if (error !== undefined) reject(error);
+        else resolve(value);
+      };
+      const onResolved = () => finish(SERVER_REQUEST_RESOLVED);
+      this.serverRequestResolutionWaiters.get(request.id)?.();
+      this.serverRequestResolutionWaiters.set(request.id, onResolved);
+      timer = setTimeout(() => finish(this.defaultDecline(request)), timeoutMs);
+      Promise.resolve()
+        .then(() => handler(request, { signal: handlerController.signal }))
+        .then(
+          (value) => finish(value),
+          (error) => finish(undefined, error),
+        );
     });
   }
   private async handleServerRequest(request: ServerRequest): Promise<void> {
@@ -466,6 +508,7 @@ export class CodexAxonConnection {
       const result = handler
         ? await this.approvalWithTimeout(approval, handler, timeoutMs)
         : this.defaultApproval(approval);
+      if (result === SERVER_REQUEST_RESOLVED) return;
       await this.transport?.write({ id: request.id, result });
     } catch (error) {
       if (this.transport?.isReady()) {
@@ -710,10 +753,11 @@ export class CodexAxonConnection {
     await this.request("turn/steer", { threadId: this._threadId, input });
   }
   /**
-   * Registers an approval handler. Without one, command/file approvals are
-   * accepted, legacy approvals are approved, user-input answers are empty,
-   * and requested permissions are granted for the turn. Handler timeouts are
-   * declined. Mounting with `approval_policy=never` avoids approval traffic.
+   * Registers an approval or elicitation handler. Without one, command/file
+   * approvals are accepted, legacy approvals are approved, user-input answers
+   * are empty, requested permissions are granted for the turn, and MCP
+   * elicitations are canceled. Handler timeouts are declined or canceled.
+   * Mounting with `approval_policy=never` avoids approval traffic.
    */
   onApprovalRequest(method: ApprovalMethod, handler: ApprovalHandler): () => void {
     this.handlers.set(method, handler);

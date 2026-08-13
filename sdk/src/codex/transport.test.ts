@@ -67,6 +67,34 @@ describe("CodexAxonTransport", () => {
     ]);
   });
 
+  it("does not replay a server request cleared by serverRequest/resolved", async () => {
+    const ctrl = createControllableStream(true);
+    const { axon } = createMockAxon(ctrl);
+    const transport = new CodexAxonTransport(axon as never, { replayTargetSequence: 2 });
+    await transport.connect();
+    ctrl.push(
+      makeAgentEvent(
+        "mcpServer/elicitation/request",
+        { method: "mcpServer/elicitation/request", id: "elicit-1", params: {} },
+        1,
+      ),
+    );
+    ctrl.push(
+      makeAgentEvent(
+        "serverRequest/resolved",
+        {
+          method: "serverRequest/resolved",
+          params: { threadId: "thr-1", requestId: "elicit-1" },
+        },
+        2,
+      ),
+    );
+    ctrl.end();
+    const frames = [];
+    for await (const frame of transport.readMessages()) frames.push(frame);
+    expect(frames).toEqual([]);
+  });
+
   // Pins current behavior: an answer replayed before its request resolves
   // nothing, so the request is flushed as unanswered and the connection will
   // answer it again. Axon sequences are monotonic, so this should only occur

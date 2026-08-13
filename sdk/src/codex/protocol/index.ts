@@ -46,6 +46,7 @@ export const CODEX_NOTIFICATION_METHODS = [
   "item/reasoning/summaryTextDelta",
   "item/reasoning/summaryPartAdded",
   "item/reasoning/textDelta",
+  "serverRequest/resolved",
   "error",
 ] as const;
 
@@ -53,6 +54,7 @@ export const CODEX_APPROVAL_REQUEST_METHODS = [
   "item/commandExecution/requestApproval",
   "item/fileChange/requestApproval",
   "item/tool/requestUserInput",
+  "mcpServer/elicitation/request",
   "item/permissions/requestApproval",
   "execCommandApproval",
   "applyPatchApproval",

@@ -64,6 +64,10 @@ export type CodexReasoningTextDeltaTimelineEvent = ProtocolTimelineEvent<
   "item/reasoning/textDelta",
   NotificationFrame<"item/reasoning/textDelta">
 >;
+export type CodexServerRequestResolvedTimelineEvent = ProtocolTimelineEvent<
+  "serverRequest/resolved",
+  NotificationFrame<"serverRequest/resolved">
+>;
 export type CodexErrorTimelineEvent = ProtocolTimelineEvent<"error", NotificationFrame<"error">>;
 export type CodexResponseTimelineEvent = ProtocolTimelineEvent<"response", CodexResponseFrame>;
 
@@ -73,6 +77,7 @@ export type CodexApprovalRequestTimelineEvent = {
     | "item/commandExecution/requestApproval"
     | "item/fileChange/requestApproval"
     | "item/tool/requestUserInput"
+    | "mcpServer/elicitation/request"
     | "item/permissions/requestApproval"
     | "execCommandApproval"
     | "applyPatchApproval"
@@ -82,6 +87,7 @@ export type CodexApprovalRequestTimelineEvent = {
   | "item/commandExecution/requestApproval"
   | "item/fileChange/requestApproval"
   | "item/tool/requestUserInput"
+  | "mcpServer/elicitation/request"
   | "item/permissions/requestApproval"
   | "execCommandApproval"
   | "applyPatchApproval"
@@ -98,6 +104,7 @@ export type CodexProtocolTimelineEvent =
   | CodexReasoningSummaryTextDeltaTimelineEvent
   | CodexReasoningSummaryPartAddedTimelineEvent
   | CodexReasoningTextDeltaTimelineEvent
+  | CodexServerRequestResolvedTimelineEvent
   | CodexApprovalRequestTimelineEvent
   | CodexErrorTimelineEvent
   | CodexResponseTimelineEvent;

@@ -12,6 +12,7 @@ import type {
   CodexReasoningSummaryTextDeltaTimelineEvent,
   CodexReasoningTextDeltaTimelineEvent,
   CodexResponseTimelineEvent,
+  CodexServerRequestResolvedTimelineEvent,
   CodexThreadStartedTimelineEvent,
   CodexTimelineEvent,
   CodexTurnCompletedTimelineEvent,
@@ -86,6 +87,10 @@ export const isCodexReasoningSummaryPartAddedEvent = (
 export const isCodexReasoningTextDeltaEvent = (
   event: CodexTimelineEvent,
 ): event is CodexReasoningTextDeltaTimelineEvent => hasEventType(event, "item/reasoning/textDelta");
+export const isCodexServerRequestResolvedEvent = (
+  event: CodexTimelineEvent,
+): event is CodexServerRequestResolvedTimelineEvent =>
+  hasEventType(event, "serverRequest/resolved");
 export const isCodexErrorEvent = (event: CodexTimelineEvent): event is CodexErrorTimelineEvent =>
   hasEventType(event, "error");
 export const isCodexResponseEvent = (

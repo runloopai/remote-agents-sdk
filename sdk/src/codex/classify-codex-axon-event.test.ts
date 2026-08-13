@@ -6,6 +6,7 @@ import {
   isCodexApprovalRequestEvent,
   isCodexItemCompletedEvent,
   isCodexResponseEvent,
+  isCodexServerRequestResolvedEvent,
   isCodexThreadStartedEvent,
   isTurnCompletedEvent,
   isUnknownTimelineEvent,
@@ -115,6 +116,25 @@ describe("classifyCodexAxonEvent", () => {
     if (isCodexApprovalRequestEvent(event)) expect(event.data.id).toBe(41);
   });
 
+  it("classifies MCP elicitations and their resolved notification", () => {
+    const request = classifyCodexAxonEvent(
+      frame("mcpServer/elicitation/request", {
+        method: "mcpServer/elicitation/request",
+        id: 0,
+        params: { mode: "form", message: "Which city?", requestedSchema: {} },
+      }),
+    );
+    expect(isCodexApprovalRequestEvent(request)).toBe(true);
+
+    const resolved = classifyCodexAxonEvent(
+      frame("serverRequest/resolved", {
+        method: "serverRequest/resolved",
+        params: { threadId: "thr-1", requestId: 0 },
+      }),
+    );
+    expect(isCodexServerRequestResolvedEvent(resolved)).toBe(true);
+  });
+
   it("classifies methodless JSON-RPC responses using the broker response event type", () => {
     const event = classifyCodexAxonEvent(
       frame("response", { id: "sdk-1", result: { thread: {} } }),
@@ -142,6 +162,8 @@ describe("isCodexProtocolEventType", () => {
     expect(isCodexProtocolEventType("turn/started")).toBe(true);
     expect(isCodexProtocolEventType("item/reasoning/textDelta")).toBe(true);
     expect(isCodexProtocolEventType("applyPatchApproval")).toBe(true);
+    expect(isCodexProtocolEventType("mcpServer/elicitation/request")).toBe(true);
+    expect(isCodexProtocolEventType("serverRequest/resolved")).toBe(true);
     expect(isCodexProtocolEventType("error")).toBe(true);
     expect(isCodexProtocolEventType("response")).toBe(true);
     expect(isCodexProtocolEventType("custom/event")).toBe(false);

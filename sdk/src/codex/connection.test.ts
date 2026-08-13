@@ -333,6 +333,11 @@ describe("CodexAxonConnection", () => {
     ["item/fileChange/requestApproval", {}, { decision: "accept" }],
     ["item/tool/requestUserInput", {}, { answers: {} }],
     [
+      "mcpServer/elicitation/request",
+      { mode: "form" },
+      { action: "cancel", content: null, _meta: null },
+    ],
+    [
       "item/permissions/requestApproval",
       { permissions: { network: null, fileSystem: null } },
       { permissions: {}, scope: "turn" },
@@ -365,6 +370,80 @@ describe("CodexAxonConnection", () => {
       id: 3,
       result: { answers: { topic: { answers: ["Build something"] } } },
     });
+  });
+
+  it("round-trips an MCP elicitation handler's structured content", async () => {
+    const { ctrl, mock, conn } = setup();
+    conn.onApprovalRequest("mcpServer/elicitation/request", async () => ({
+      action: "accept",
+      content: { city: "Paris" },
+      _meta: null,
+    }));
+    await conn.connect();
+    ctrl.push(
+      makeAgentEvent("mcpServer/elicitation/request", {
+        method: "mcpServer/elicitation/request",
+        id: 0,
+        params: { mode: "form", message: "Which city?", requestedSchema: {} },
+      }),
+    );
+    await tick();
+    expect(JSON.parse(mock.published[0]?.payload ?? "null")).toEqual({
+      id: 0,
+      result: { action: "accept", content: { city: "Paris" }, _meta: null },
+    });
+  });
+
+  it("stops a parked handler when app-server resolves the request elsewhere", async () => {
+    const { ctrl, mock, conn } = setup({ requestTimeoutMs: 1_000 });
+    let handlerSignal: AbortSignal | undefined;
+    conn.onApprovalRequest("mcpServer/elicitation/request", (_request, context) => {
+      handlerSignal = context.signal;
+      return new Promise(() => undefined);
+    });
+    await conn.connect();
+    ctrl.push(
+      makeAgentEvent("mcpServer/elicitation/request", {
+        method: "mcpServer/elicitation/request",
+        id: "elicit-1",
+        params: { mode: "url", message: "Authorize", url: "https://example.com" },
+      }),
+    );
+    await tick();
+    ctrl.push(
+      makeAgentEvent("serverRequest/resolved", {
+        method: "serverRequest/resolved",
+        params: { threadId: "thr-1", requestId: "elicit-1" },
+      }),
+    );
+    await tick();
+    expect(mock.published).toHaveLength(0);
+    expect(handlerSignal?.aborted).toBe(true);
+  });
+
+  it("replaces a stale parked handler when the same request is replayed", async () => {
+    const { ctrl, mock, conn } = setup({ requestTimeoutMs: 1_000 });
+    const signals: AbortSignal[] = [];
+    conn.onApprovalRequest("mcpServer/elicitation/request", (_request, context) => {
+      signals.push(context.signal);
+      return new Promise(() => undefined);
+    });
+    await conn.connect();
+    const request = {
+      method: "mcpServer/elicitation/request",
+      id: "elicit-replayed",
+      params: { mode: "form", message: "Which city?", requestedSchema: {} },
+    };
+
+    ctrl.push(makeAgentEvent(request.method, request));
+    await tick();
+    ctrl.push(makeAgentEvent(request.method, request));
+    await tick();
+
+    expect(signals).toHaveLength(2);
+    expect(signals[0]?.aborted).toBe(true);
+    expect(signals[1]?.aborted).toBe(false);
+    expect(mock.published).toHaveLength(0);
   });
 
   it("answers unsupported server requests with a JSON-RPC error", async () => {
