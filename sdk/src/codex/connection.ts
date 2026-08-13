@@ -73,6 +73,14 @@ export type ApprovalHandler = (
   context: ApprovalHandlerContext,
 ) => Promise<unknown> | unknown;
 const SERVER_REQUEST_RESOLVED = Symbol("server-request-resolved");
+interface ServerRequestLifecycle {
+  /** Cancels any handler or outbound response when app-server clears the request. */
+  signal: AbortSignal;
+  /** True when app-server cleared the request. */
+  resolvedElsewhere: () => boolean;
+  /** Stop tracking the request after its final response has finished publishing. */
+  release: () => void;
+}
 /**
  * JSON-RPC error returned by the Codex app-server for a client request.
  * Preserves the wire `code` and `data` alongside the message.
@@ -460,40 +468,71 @@ export class CodexAxonConnection {
         return { permissions: {}, scope: "turn" };
     }
   }
+  private trackServerRequest(requestId: string | number): ServerRequestLifecycle {
+    let resolvedElsewhere = false;
+    const controller = new AbortController();
+    const release = () => {
+      if (this.serverRequestResolutionWaiters.get(requestId) === onResolved) {
+        this.serverRequestResolutionWaiters.delete(requestId);
+      }
+    };
+    const onResolved = () => {
+      resolvedElsewhere = true;
+      release();
+      controller.abort();
+    };
+    this.serverRequestResolutionWaiters.get(requestId)?.();
+    this.serverRequestResolutionWaiters.set(requestId, onResolved);
+    return { signal: controller.signal, resolvedElsewhere: () => resolvedElsewhere, release };
+  }
   private approvalWithTimeout(
     request: ApprovalRequest,
     handler: ApprovalHandler,
     timeoutMs: number,
+    requestSignal: AbortSignal,
   ): Promise<unknown | typeof SERVER_REQUEST_RESOLVED> {
     return new Promise((resolve, reject) => {
       let settled = false;
       let timer: ReturnType<typeof setTimeout> | undefined;
       const handlerController = new AbortController();
-      const finish = (value: unknown | typeof SERVER_REQUEST_RESOLVED, error?: unknown) => {
+      const finish = (result: unknown) => {
         if (settled) return;
         settled = true;
         if (timer) clearTimeout(timer);
-        if (this.serverRequestResolutionWaiters.get(request.id) === onResolved) {
-          this.serverRequestResolutionWaiters.delete(request.id);
-        }
+        requestSignal.removeEventListener("abort", onResolved);
         handlerController.abort();
-        if (error !== undefined) reject(error);
-        else resolve(value);
+        resolve(result);
       };
-      const onResolved = () => finish(SERVER_REQUEST_RESOLVED);
-      this.serverRequestResolutionWaiters.get(request.id)?.();
-      this.serverRequestResolutionWaiters.set(request.id, onResolved);
+      const fail = (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        requestSignal.removeEventListener("abort", onResolved);
+        handlerController.abort();
+        reject(error);
+      };
+      const onResolved = () => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        requestSignal.removeEventListener("abort", onResolved);
+        handlerController.abort();
+        resolve(SERVER_REQUEST_RESOLVED);
+      };
+      if (requestSignal.aborted) {
+        onResolved();
+        return;
+      }
+      requestSignal.addEventListener("abort", onResolved, { once: true });
       timer = setTimeout(() => finish(this.defaultDecline(request)), timeoutMs);
       Promise.resolve()
         .then(() => handler(request, { signal: handlerController.signal }))
-        .then(
-          (value) => finish(value),
-          (error) => finish(undefined, error),
-        );
+        .then(finish, fail);
     });
   }
   private async handleServerRequest(request: ServerRequest): Promise<void> {
     if (this.fatal || !this.transport?.isReady()) return;
+    let lifecycle: ServerRequestLifecycle | undefined;
     try {
       if (!CODEX_APPROVAL_REQUEST_METHOD_SET.has(request.method)) {
         await this.transport.write({
@@ -502,21 +541,37 @@ export class CodexAxonConnection {
         });
         return;
       }
+      lifecycle = this.trackServerRequest(request.id);
       const approval = request as ApprovalRequest;
       const handler = this.handlers.get(approval.method);
       const timeoutMs = this.options.requestTimeoutMs ?? 60_000;
-      const result = handler
-        ? await this.approvalWithTimeout(approval, handler, timeoutMs)
+      const outcome = handler
+        ? await this.approvalWithTimeout(approval, handler, timeoutMs, lifecycle.signal)
         : this.defaultApproval(approval);
-      if (result === SERVER_REQUEST_RESOLVED) return;
-      await this.transport?.write({ id: request.id, result });
+      if (outcome === SERVER_REQUEST_RESOLVED || lifecycle.resolvedElsewhere()) return;
+      await this.transport?.write(
+        { id: request.id, result: outcome },
+        { signal: lifecycle.signal },
+      );
     } catch (error) {
-      if (this.transport?.isReady()) {
-        await this.transport.write({
-          id: request.id,
-          error: { code: -32000, message: error instanceof Error ? error.message : String(error) },
-        });
+      if (!lifecycle?.resolvedElsewhere() && this.transport?.isReady()) {
+        try {
+          await this.transport.write(
+            {
+              id: request.id,
+              error: {
+                code: -32000,
+                message: error instanceof Error ? error.message : String(error),
+              },
+            },
+            lifecycle ? { signal: lifecycle.signal } : undefined,
+          );
+        } catch (publishError) {
+          if (!lifecycle?.resolvedElsewhere()) throw publishError;
+        }
       }
+    } finally {
+      lifecycle?.release();
     }
   }
   /**

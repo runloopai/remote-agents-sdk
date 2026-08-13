@@ -22,7 +22,7 @@ export interface CodexAxonTransportOptions {
 export interface CodexTransport {
   connect(): Promise<void>;
   reconnect(): Promise<void>;
-  write(frame: CodexFrame | string): Promise<void>;
+  write(frame: CodexFrame | string, options?: { signal?: AbortSignal }): Promise<void>;
   readMessages(): AsyncIterable<CodexFrame>;
   close(): Promise<void>;
   abortStream(): void;
@@ -76,8 +76,8 @@ export class CodexAxonTransport implements CodexTransport {
   async reconnect(): Promise<void> {
     await this.inner.reconnect();
   }
-  async write(frame: CodexFrame | string): Promise<void> {
-    await this.inner.write(frame);
+  async write(frame: CodexFrame | string, options?: { signal?: AbortSignal }): Promise<void> {
+    await this.inner.write(frame, options);
   }
   async *readMessages(): AsyncGenerator<CodexFrame> {
     yield* this.inner.readMessages();

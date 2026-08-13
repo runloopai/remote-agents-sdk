@@ -421,6 +421,121 @@ describe("CodexAxonConnection", () => {
     expect(handlerSignal?.aborted).toBe(true);
   });
 
+  it("tracks external resolution until the handler response finishes publishing", async () => {
+    const { ctrl, mock, conn } = setup();
+    let responseSignal: AbortSignal | undefined;
+    mock.axon.publish.mockImplementationOnce(
+      (...args: unknown[]) =>
+        new Promise<void>((_resolve, reject) => {
+          responseSignal = (args[1] as { signal?: AbortSignal } | undefined)?.signal;
+          responseSignal?.addEventListener("abort", () => reject(new Error("publish aborted")), {
+            once: true,
+          });
+        }),
+    );
+    conn.onApprovalRequest("mcpServer/elicitation/request", () => ({
+      action: "accept",
+      content: { city: "Paris" },
+      _meta: null,
+    }));
+    await conn.connect();
+    ctrl.push(
+      makeAgentEvent("mcpServer/elicitation/request", {
+        method: "mcpServer/elicitation/request",
+        id: "elicit-publishing",
+        params: { mode: "form", message: "Which city?", requestedSchema: {} },
+      }),
+    );
+    await tick();
+    expect(responseSignal).toBeDefined();
+
+    ctrl.push(
+      makeAgentEvent("serverRequest/resolved", {
+        method: "serverRequest/resolved",
+        params: { threadId: "thr-1", requestId: "elicit-publishing" },
+      }),
+    );
+    await tick();
+
+    expect(responseSignal?.aborted).toBe(true);
+    // Once Codex reports the request resolved, the in-flight response is
+    // canceled and its failure does not trigger a second, stale error response.
+    expect(mock.axon.publish).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels a fallback error response when app-server resolves the request", async () => {
+    const { ctrl, mock, conn } = setup();
+    let responseSignal: AbortSignal | undefined;
+    mock.axon.publish.mockImplementationOnce(
+      (...args: unknown[]) =>
+        new Promise<void>((_resolve, reject) => {
+          responseSignal = (args[1] as { signal?: AbortSignal } | undefined)?.signal;
+          responseSignal?.addEventListener("abort", () => reject(new Error("publish aborted")), {
+            once: true,
+          });
+        }),
+    );
+    conn.onApprovalRequest("mcpServer/elicitation/request", () => {
+      throw new Error("handler failed");
+    });
+    await conn.connect();
+    ctrl.push(
+      makeAgentEvent("mcpServer/elicitation/request", {
+        method: "mcpServer/elicitation/request",
+        id: "elicit-error-publishing",
+        params: { mode: "form", message: "Which city?", requestedSchema: {} },
+      }),
+    );
+    await tick();
+    expect(responseSignal).toBeDefined();
+
+    ctrl.push(
+      makeAgentEvent("serverRequest/resolved", {
+        method: "serverRequest/resolved",
+        params: { threadId: "thr-1", requestId: "elicit-error-publishing" },
+      }),
+    );
+    await tick();
+
+    expect(responseSignal?.aborted).toBe(true);
+    expect(mock.axon.publish).toHaveBeenCalledTimes(1);
+  });
+
+  it("tracks default responses until they finish publishing", async () => {
+    const { ctrl, mock, conn } = setup();
+    let responseSignal: AbortSignal | undefined;
+    mock.axon.publish.mockImplementationOnce(
+      (...args: unknown[]) =>
+        new Promise<void>((_resolve, reject) => {
+          responseSignal = (args[1] as { signal?: AbortSignal } | undefined)?.signal;
+          responseSignal?.addEventListener("abort", () => reject(new Error("publish aborted")), {
+            once: true,
+          });
+        }),
+    );
+    await conn.connect();
+    ctrl.push(
+      makeAgentEvent("item/commandExecution/requestApproval", {
+        method: "item/commandExecution/requestApproval",
+        id: "default-publishing",
+        params: {},
+      }),
+    );
+    await tick();
+    expect(responseSignal).toBeDefined();
+
+    ctrl.push(
+      makeAgentEvent("serverRequest/resolved", {
+        method: "serverRequest/resolved",
+        params: { threadId: "thr-1", requestId: "default-publishing" },
+      }),
+    );
+    await tick();
+
+    expect(responseSignal?.aborted).toBe(true);
+    expect(mock.axon.publish).toHaveBeenCalledTimes(1);
+  });
+
   it("replaces a stale parked handler when the same request is replayed", async () => {
     const { ctrl, mock, conn } = setup({ requestTimeoutMs: 1_000 });
     const signals: AbortSignal[] = [];
