@@ -63,7 +63,7 @@ export class AxonFrameTransport<TFrame> {
     );
   }
 
-  async write(data: TFrame | string): Promise<void> {
+  async write(data: TFrame | string, options?: { signal?: AbortSignal }): Promise<void> {
     if (!this.isReady())
       throw new Error("Transport is not ready. Call connect() first or check isReady().");
     const raw = typeof data === "string" ? data : JSON.stringify(data);
@@ -71,13 +71,16 @@ export class AxonFrameTransport<TFrame> {
     if (frame === undefined && !this.options.allowInvalidOutbound)
       throw new Error("Cannot publish an invalid protocol frame");
     if (frame !== undefined) this.options.validateOutbound?.(frame);
-    await this.axon.publish({
-      event_type: this.options.resolveEventType(frame, raw),
-      origin: "USER_EVENT",
-      payload: raw,
-      source:
-        typeof this.options.source === "function" ? this.options.source() : this.options.source,
-    });
+    await this.axon.publish(
+      {
+        event_type: this.options.resolveEventType(frame, raw),
+        origin: "USER_EVENT",
+        payload: raw,
+        source:
+          typeof this.options.source === "function" ? this.options.source() : this.options.source,
+      },
+      options?.signal ? { signal: options.signal } : undefined,
+    );
   }
 
   async *readMessages(): AsyncGenerator<TFrame> {
