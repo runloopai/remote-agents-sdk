@@ -13,12 +13,21 @@ export class PendingRequestMap<Id, Value> {
     // Silently overwriting would orphan the old entry's promise and leave its
     // timer racing against the new entry's — surface the caller bug instead.
     if (this.pending.has(id)) throw new Error(`Duplicate pending request id: ${String(id)}`);
-    return new Promise<Value>((resolve, reject) => {
+    const p = new Promise<Value>((resolve, reject) => {
       const timer = setTimeout(() => {
         if (this.pending.delete(id)) reject(new Error(timeoutMessage));
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
     });
+    // Suppress unhandledRejection during the window between create() and the
+    // caller awaiting the returned promise. Callers store the promise, then
+    // suspend on an await (e.g. transport.write) before returning it. If the
+    // read loop rejects this promise during that suspension, Node fires
+    // unhandledRejection and terminates the process. The noop .catch() marks
+    // the promise as handled without swallowing the error — we return p, not
+    // p.catch()'s result, so the rejection still propagates to the caller.
+    p.catch(() => {});
+    return p;
   }
 
   resolve(id: Id, value: Value): boolean {
