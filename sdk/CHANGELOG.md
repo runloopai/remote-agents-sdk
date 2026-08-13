@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.8](https://github.com/runloopai/remote-agents-sdk/compare/remote-agents-sdk-v0.4.7...remote-agents-sdk-v0.4.8) (2026-08-13)
+
+
+### Bug Fixes
+
+* **sdk:** handle Codex MCP elicitation requests ([#162](https://github.com/runloopai/remote-agents-sdk/issues/162)) ([3d908ad](https://github.com/runloopai/remote-agents-sdk/commit/3d908add08253009a5d5e6ace01c28a5a5de922a))
+* **sdk:** suppress unhandledRejection in PendingRequestMap.create() ([#161](https://github.com/runloopai/remote-agents-sdk/issues/161)) ([e4ca6f1](https://github.com/runloopai/remote-agents-sdk/commit/e4ca6f1d07999060a7002d884c9a3a85acaef14b))
+
 ## [0.4.7](https://github.com/runloopai/remote-agents-sdk/compare/remote-agents-sdk-v0.4.6...remote-agents-sdk-v0.4.7) (2026-07-17)
 
 
