@@ -940,7 +940,7 @@ type WireData = Record<string, any>;
 ## Known Limitations
 
 - **Explicit `connect()` required**: All connections require an explicit `await conn.connect()` call followed by `initialize()` — ACP, Claude, and Codex alike. The constructor is lightweight and synchronous.
-- **Automatic reconnection (single retry)**: If an SSE stream drops unexpectedly, the SDK re-subscribes once and logs a `console.warn`. If the retry also fails, the connection is terminal — create a new instance.
+- **Automatic reconnection (indefinite)**: If an SSE stream drops unexpectedly, the SDK re-subscribes from the last-seen sequence number and logs a `console.warn`, retrying with exponential backoff that resets once the stream is healthy again. Non-retryable errors (4xx HTTP statuses other than 408/429) are terminal — the connection surfaces the error and you must create a new instance.
 - **Permission handling** (Claude): The `ClaudeAxonConnection` auto-approves all tool use by default. Register a `"can_use_tool"` handler via `onControlRequest()` to customize.
 - **Approval handling** (Codex): The `CodexAxonConnection` auto-approves server-initiated approval requests by default. Register handlers via `onApprovalRequest()` to customize, or mount with `launch_args: ["-c", "approval_policy=never"]` to skip approval traffic entirely.
 

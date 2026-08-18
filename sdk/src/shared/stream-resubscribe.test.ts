@@ -147,6 +147,31 @@ describe("runStreamResubscribeLoop", () => {
     expect(onRetry).not.toHaveBeenCalled();
   });
 
+  it("stops without retrying on a stable client error", async () => {
+    const badCursor = statusError(400, "invalid after_sequence");
+    const runAttempt = scriptAttempts([{ kind: "throw", error: badCursor }]);
+    const onRetry = vi.fn();
+    const result = await runStreamResubscribeLoop(makeOptions(runAttempt, { onRetry }));
+    expect(result).toEqual({ reason: "terminal", error: badCursor });
+    expect(runAttempt).toHaveBeenCalledTimes(1);
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+
+  it("retries transient 4xx errors (408 and 429)", async () => {
+    const timeout = statusError(408, "request timeout");
+    const rateLimited = statusError(429, "rate limited");
+    const runAttempt = scriptAttempts([
+      { kind: "throw", error: timeout },
+      { kind: "throw", error: rateLimited },
+      { kind: "events", count: 0, outcome: "stop" },
+    ]);
+    const onRetry = vi.fn();
+    const result = await runStreamResubscribeLoop(makeOptions(runAttempt, { onRetry }));
+    expect(result).toEqual({ reason: "stopped" });
+    expect(runAttempt).toHaveBeenCalledTimes(3);
+    expect(onRetry.mock.calls.map(([info]) => info.error)).toEqual([timeout, rateLimited]);
+  });
+
   it("wraps a non-Error terminal value in an Error", async () => {
     const runAttempt = scriptAttempts([{ kind: "throw", error: { status: 401 } }]);
     const result = await runStreamResubscribeLoop(makeOptions(runAttempt));
@@ -230,7 +255,7 @@ describe("runStreamResubscribeLoop", () => {
 });
 
 describe("isTerminalSubscribeError", () => {
-  it.each([[401], [403], [404]])("treats HTTP %s as terminal", (status) => {
+  it.each([[400], [401], [403], [404], [422]])("treats HTTP %s as terminal", (status) => {
     expect(isTerminalSubscribeError(statusError(status))).toBe(true);
   });
 

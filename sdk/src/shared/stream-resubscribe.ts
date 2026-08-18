@@ -27,21 +27,24 @@ export const DEFAULT_MAX_DELAY_MS = 30_000;
  */
 export const DEFAULT_SUCCESS_INTERVAL_MS = 30_000;
 
-/** HTTP statuses that can never succeed by retrying the subscription. */
-const TERMINAL_HTTP_STATUSES = new Set([401, 403, 404]);
+/** 4xx statuses that are transient rather than stable client errors. */
+const RETRYABLE_CLIENT_HTTP_STATUSES = new Set([408, 429]);
 
 /**
  * Returns `true` for errors that retrying the SSE subscription can never
- * fix: HTTP 401/403 (auth) and 404 (axon gone). Matches the `status`
- * property carried by `@runloop/api-client` `APIError` subclasses without a
- * runtime dependency on the peer's class identities.
+ * fix: any HTTP 4xx status (auth failure, axon gone, invalid request)
+ * except the explicitly transient 408 (request timeout) and 429 (rate
+ * limit). 5xx, network errors, and everything else stay retryable. Matches
+ * the `status` property carried by `@runloop/api-client` `APIError`
+ * subclasses without a runtime dependency on the peer's class identities.
  *
  * @category Utilities
  */
 export function isTerminalSubscribeError(error: unknown): boolean {
   if (!isNonNullObject(error)) return false;
   const status = (error as { status?: unknown }).status;
-  return typeof status === "number" && TERMINAL_HTTP_STATUSES.has(status);
+  if (typeof status !== "number") return false;
+  return status >= 400 && status < 500 && !RETRYABLE_CLIENT_HTTP_STATUSES.has(status);
 }
 
 /**
