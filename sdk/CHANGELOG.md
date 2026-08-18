@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.9](https://github.com/runloopai/remote-agents-sdk/compare/remote-agents-sdk-v0.4.8...remote-agents-sdk-v0.4.9) (2026-08-18)
+
+
+### Bug Fixes
+
+* **sdk:** cancel Codex responses resolved during publish ([#164](https://github.com/runloopai/remote-agents-sdk/issues/164)) ([50901a8](https://github.com/runloopai/remote-agents-sdk/commit/50901a89d297a8706a61ed363e380fa5839901ed))
+* **sdk:** resubscribe SSE streams indefinitely instead of dying after two closes ([#168](https://github.com/runloopai/remote-agents-sdk/issues/168)) ([40f3835](https://github.com/runloopai/remote-agents-sdk/commit/40f3835f0d1917f128ebf98603ea1e8819896106))
+
 ## [0.4.8](https://github.com/runloopai/remote-agents-sdk/compare/remote-agents-sdk-v0.4.7...remote-agents-sdk-v0.4.8) (2026-08-13)
 
 
