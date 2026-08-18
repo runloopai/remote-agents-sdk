@@ -6,6 +6,7 @@
 export type { AxonEventView } from "@runloop/api-client/resources/axons";
 
 import type { AxonEventView } from "@runloop/api-client/resources/axons";
+import type { ResubscribeTuning } from "./stream-resubscribe.js";
 
 // ---------------------------------------------------------------------------
 // Timeline events — unified event stream types
@@ -152,6 +153,12 @@ export type AxonEventListener = (event: AxonEventView) => void;
  * @category Configuration
  */
 export interface BaseConnectionOptions {
+  /**
+   * Backoff tuning overrides for the SSE resubscribe engine.
+   * @internal
+   */
+  retry?: ResubscribeTuning;
+
   /**
    * When `true`, emit timestamped diagnostic logs to `stderr` for every
    * transport read/write and lifecycle event.

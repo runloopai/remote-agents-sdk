@@ -41,6 +41,18 @@ export {
 export { PendingRequestMap } from "./pending-request-map.js";
 export { getLastSequence } from "./replay.js";
 export {
+  DEFAULT_BASE_DELAY_MS,
+  DEFAULT_MAX_DELAY_MS,
+  DEFAULT_SUCCESS_INTERVAL_MS,
+  isTerminalSubscribeError,
+  type ResubscribeAttemptOutcome,
+  type ResubscribeRetryInfo,
+  type ResubscribeTuning,
+  runStreamResubscribeLoop,
+  type StreamResubscribeOptions,
+  type StreamResubscribeResult,
+} from "./stream-resubscribe.js";
+export {
   getJsonRpcId,
   getRequestId,
   getStringProp,

@@ -1,4 +1,5 @@
 import { SystemError } from "./errors/system-error.js";
+import { type ResubscribeTuning, runStreamResubscribeLoop } from "./stream-resubscribe.js";
 import type { LogFn } from "./types.js";
 
 export interface ReconnectableMessageTransport<TMessage> {
@@ -19,58 +20,62 @@ export interface ConnectionReadLoopOptions<TMessage> {
   onTerminalError(error: Error): void;
   onFinished(): void;
   log: LogFn;
+  /** Backoff tuning overrides, injectable for tests. @internal */
+  retry?: ResubscribeTuning;
 }
 
 /**
- * Runs a protocol-neutral message read loop with one SSE reconnect attempt.
- * Fatal broker errors permanently terminate the connection; transient errors
- * are reported immediately but reject pending work only after recovery fails.
+ * Runs a protocol-neutral message read loop that resubscribes indefinitely.
+ *
+ * The broker evicts idle axons (cleanly closing every subscriber stream), so
+ * both clean stream ends and transient errors trigger a reconnect with
+ * `after_sequence` set to the last seen sequence (handled by the transport),
+ * with exponential backoff between consecutive failures (see
+ * `runStreamResubscribeLoop`). Fatal broker errors permanently terminate the
+ * connection; unretryable subscribe errors (HTTP 401/403/404) surface through
+ * `onTerminalError`. Transient errors are reported through `onError` on every
+ * occurrence.
  */
 export async function runConnectionReadLoop<TMessage>(
   options: ConnectionReadLoopOptions<TMessage>,
 ): Promise<void> {
-  let lastError: Error | undefined;
-  const consume = async (): Promise<"ended" | "error" | "fatal"> => {
-    try {
-      for await (const message of options.transport.readMessages()) {
-        if (options.isClosed()) return "ended";
-        options.route(message);
-      }
-      return "ended";
-    } catch (error) {
-      options.log("readLoop", `error: ${error}`);
-      options.onError(error);
-      lastError = error instanceof Error ? error : new Error(String(error));
-      if (error instanceof SystemError) {
-        options.onFatal(error);
-        await options.transport.close().catch(() => undefined);
-        return "fatal";
-      }
-      return "error";
-    }
-  };
+  const stopped = (): boolean =>
+    options.isClosed() ||
+    options.isReconnectSuppressed() ||
+    options.isStreamAborted() ||
+    !options.isCurrent();
 
-  let outcome = await consume();
-  if (
-    outcome !== "fatal" &&
-    !options.isClosed() &&
-    !options.isReconnectSuppressed() &&
-    !options.isStreamAborted() &&
-    options.isCurrent()
-  ) {
-    try {
-      options.log("readLoop", "SSE stream ended, reconnecting...");
-      await options.transport.reconnect();
-      outcome = await consume();
-    } catch (error) {
-      options.log("readLoop", `reconnect failed: ${error}`);
-      options.onError(error);
-      lastError = error instanceof Error ? error : new Error(String(error));
-      outcome = "error";
-    }
-  }
+  let first = true;
+  const result = await runStreamResubscribeLoop({
+    ...options.retry,
+    shouldStop: stopped,
+    log: options.log,
+    runAttempt: async (reportActivity) => {
+      try {
+        if (!first) {
+          options.log("readLoop", "reconnecting SSE stream...");
+          await options.transport.reconnect();
+        }
+        first = false;
+        for await (const message of options.transport.readMessages()) {
+          if (options.isClosed()) return "ended";
+          reportActivity();
+          options.route(message);
+        }
+        return "ended";
+      } catch (error) {
+        options.log("readLoop", `error: ${error}`);
+        options.onError(error);
+        if (error instanceof SystemError) {
+          options.onFatal(error);
+          await options.transport.close().catch(() => undefined);
+          return "stop";
+        }
+        throw error;
+      }
+    },
+  });
 
-  if (outcome === "error")
-    options.onTerminalError(lastError ?? new Error("Agent event stream failed"));
+  if (result.reason === "terminal") options.onTerminalError(result.error);
   if (options.isCurrent() && !options.isReconnectSuppressed()) options.onFinished();
 }

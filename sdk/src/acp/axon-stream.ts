@@ -5,6 +5,7 @@ import type { Axon } from "@runloop/api-client/sdk";
 import { isSystemError, SystemError } from "../shared/errors/system-error.js";
 import { makeDefaultOnError } from "../shared/logging.js";
 import { isFromAgent, isFromUser } from "../shared/origin-guards.js";
+import { type ResubscribeTuning, runStreamResubscribeLoop } from "../shared/stream-resubscribe.js";
 import { getJsonRpcId, isNonNullObject } from "../shared/structural-guards.js";
 import { isTurnFailedAxonEvent, tryParseSystemEvent } from "../shared/timeline.js";
 import type { LogFn } from "../shared/types.js";
@@ -43,7 +44,7 @@ const DEFAULT_SOURCE = "acp-sdk-client";
  * @category Connection
  */
 export function axonStream(options: AxonStreamOptions): Stream {
-  const { axon, signal, onAxonEvent, log, afterSequence, replayTargetSequence } = options;
+  const { axon, signal, onAxonEvent, log, afterSequence, replayTargetSequence, retry } = options;
   const onError = options.onError ?? makeDefaultOnError("axonStream");
   const optionSource = options.source;
   // Resolve lazily on each publish so callers can change the source between
@@ -74,6 +75,7 @@ export function axonStream(options: AxonStreamOptions): Stream {
     log,
     afterSequence,
     replayTargetSequence,
+    retry,
   );
 
   const writable = createWritable(
@@ -116,6 +118,7 @@ export function axonStream(options: AxonStreamOptions): Stream {
  * @param log - Optional diagnostic log callback.
  * @param initialAfterSequence - Axon sequence to resume from (SSE `after_sequence`).
  * @param replayTargetSequence - When set, events up to this sequence are replayed.
+ * @param retry - Backoff tuning overrides for the resubscribe engine.
  */
 function createReadable(
   axon: Axon,
@@ -128,12 +131,15 @@ function createReadable(
   log: LogFn | undefined,
   initialAfterSequence?: number,
   replayTargetSequence?: number,
+  retry?: ResubscribeTuning,
 ): ReadableStream<AnyMessage> {
   return new ReadableStream<AnyMessage>({
     async start(controller) {
       let totalEvents = 0;
-      let attempt = 0;
       let lastSequence: number | undefined = initialAfterSequence;
+      // Set once the controller has been closed or errored by the loop body
+      // (fatal broker error), so the final cleanup does not touch it again.
+      let controllerDone = false;
 
       const replaying = replayTargetSequence != null;
       // Buffer agent-to-client requests seen during replay, keyed by event_type.
@@ -141,141 +147,153 @@ function createReadable(
       // response is seen, the entry is deleted (resolved).
       const replayBuffer = new Map<string, AnyMessage>();
 
-      while (!signal?.aborted) {
-        attempt++;
-        let eventCount = 0;
-        try {
-          log?.("read", `opening SSE stream (attempt ${attempt})`);
+      const result = await runStreamResubscribeLoop({
+        ...retry,
+        signal,
+        log,
+        shouldStop: () => signal?.aborted ?? false,
+        onRetry: ({ error, consecutiveFailures, delayMs }) => {
+          onError(
+            error === undefined
+              ? `[axonStream] SSE stream ended after ${totalEvents} total events, ` +
+                  `re-subscribing in ${delayMs}ms`
+              : `[axonStream] SSE stream error after ${totalEvents} total events ` +
+                  `(consecutive failures: ${consecutiveFailures}), ` +
+                  `re-subscribing in ${delayMs}ms: ${error}`,
+          );
+        },
+        runAttempt: async (reportActivity) => {
+          log?.("read", "opening SSE stream");
           const sseStream = await axon.subscribeSse(
             lastSequence != null ? { after_sequence: lastSequence } : undefined,
           );
-          log?.("read", "SSE connected");
-          for await (const axonEvent of sseStream) {
-            if (signal?.aborted) break;
-            eventCount++;
-            totalEvents++;
-            lastSequence = axonEvent.sequence;
+          // Abort the in-flight network read as soon as the connection's
+          // signal fires — without this, disconnect() leaves the SSE
+          // response open until the server closes it.
+          const unlinkAbort = linkAbortToStream(signal, sseStream);
+          try {
+            log?.("read", "SSE connected");
+            for await (const axonEvent of sseStream) {
+              if (signal?.aborted) return "ended";
+              reportActivity();
+              totalEvents++;
+              lastSequence = axonEvent.sequence;
 
-            onAxonEvent?.(axonEvent);
+              onAxonEvent?.(axonEvent);
 
-            // --- Replay mode: suppress handler dispatch ---
-            if (replaying && axonEvent.sequence <= replayTargetSequence) {
-              processReplayEvent(
+              // --- Replay mode: suppress handler dispatch ---
+              if (replaying && axonEvent.sequence <= replayTargetSequence) {
+                processReplayEvent(
+                  axonEvent,
+                  replayBuffer,
+                  pendingRequests,
+                  pendingClientRequests,
+                  nextId,
+                  onError,
+                  log,
+                  totalEvents,
+                );
+                if (axonEvent.sequence === replayTargetSequence) {
+                  flushReplayBuffer(replayBuffer, controller, log);
+                }
+                continue;
+              }
+
+              // --- Transition out of replay ---
+              // This handles the case where events arrived between getLastSequence()
+              // and the SSE subscription, so the first live event has sequence > target.
+              if (replaying && replayBuffer.size > 0) {
+                flushReplayBuffer(replayBuffer, controller, log);
+              } else if (replaying) {
+                log?.("read", "replay complete — no unresolved requests");
+              }
+
+              // --- Normal (live) processing ---
+
+              // Reject in-flight requests on `turn.failed` SYSTEM_EVENTs but
+              // keep the SSE loop alive — the agent process is still healthy
+              // and can accept further sessions/prompts.
+              if (isTurnFailedAxonEvent(axonEvent)) {
+                const parsed = tryParseSystemEvent(axonEvent);
+                const message =
+                  parsed?.type === "turn.failed"
+                    ? parsed.error || "turn failed"
+                    : String(axonEvent.payload ?? "turn failed");
+                log?.("read", `#${totalEvents} TURN_FAILED: ${message}`);
+                for (const [method, id] of pendingRequests) {
+                  if (id !== undefined && id !== null) {
+                    controller.enqueue({
+                      jsonrpc: "2.0",
+                      id,
+                      error: {
+                        code: -32000,
+                        message,
+                        data: { event_type: axonEvent.event_type },
+                      },
+                    });
+                  }
+                  pendingRequests.delete(method);
+                }
+                continue;
+              }
+
+              if (isSystemError(axonEvent)) {
+                log?.("read", `#${totalEvents} SYSTEM_ERROR: ${axonEvent.payload}`);
+                if (pendingRequests.size === 0) {
+                  controller.error(SystemError.fromEvent(axonEvent));
+                  controllerDone = true;
+                  return "stop";
+                }
+                for (const [method, id] of pendingRequests) {
+                  if (id !== undefined && id !== null) {
+                    // FIXME: this is a temporary fix to tell the client that we couldn't process the pending request
+                    // but this isn't quite right -- this message didn't originate from the agent, so this will cause
+                    // asymmetry.
+                    controller.enqueue({
+                      jsonrpc: "2.0",
+                      id,
+                      error: {
+                        code: -32000,
+                        message: axonEvent.payload,
+                        data: { event_type: axonEvent.event_type },
+                      },
+                    });
+                  }
+                  pendingRequests.delete(method);
+                }
+                controller.close();
+                controllerDone = true;
+                return "stop";
+              }
+
+              if (!isFromAgent(axonEvent)) {
+                log?.("read", `#${totalEvents} SKIP ${axonEvent.origin} ${axonEvent.event_type}`);
+                continue;
+              }
+
+              log?.("read", `#${totalEvents} ${axonEvent.event_type}`);
+              const msg = axonEventToJsonRpc(
                 axonEvent,
-                replayBuffer,
                 pendingRequests,
                 pendingClientRequests,
                 nextId,
                 onError,
-                log,
-                totalEvents,
               );
-              if (axonEvent.sequence === replayTargetSequence) {
-                flushReplayBuffer(replayBuffer, controller, log);
-              }
-              continue;
+              if (msg) controller.enqueue(msg);
             }
-
-            // --- Transition out of replay ---
-            // This handles the case where events arrived between getLastSequence()
-            // and the SSE subscription, so the first live event has sequence > target.
-            if (replaying && replayBuffer.size > 0) {
-              flushReplayBuffer(replayBuffer, controller, log);
-            } else if (replaying) {
-              log?.("read", "replay complete — no unresolved requests");
-            }
-
-            // --- Normal (live) processing ---
-
-            // Reject in-flight requests on `turn.failed` SYSTEM_EVENTs but
-            // keep the SSE loop alive — the agent process is still healthy
-            // and can accept further sessions/prompts.
-            if (isTurnFailedAxonEvent(axonEvent)) {
-              const parsed = tryParseSystemEvent(axonEvent);
-              const message =
-                parsed?.type === "turn.failed"
-                  ? parsed.error || "turn failed"
-                  : String(axonEvent.payload ?? "turn failed");
-              log?.("read", `#${totalEvents} TURN_FAILED: ${message}`);
-              for (const [method, id] of pendingRequests) {
-                if (id !== undefined && id !== null) {
-                  controller.enqueue({
-                    jsonrpc: "2.0",
-                    id,
-                    error: {
-                      code: -32000,
-                      message,
-                      data: { event_type: axonEvent.event_type },
-                    },
-                  });
-                }
-                pendingRequests.delete(method);
-              }
-              continue;
-            }
-
-            if (isSystemError(axonEvent)) {
-              log?.("read", `#${totalEvents} SYSTEM_ERROR: ${axonEvent.payload}`);
-              if (pendingRequests.size === 0) {
-                controller.error(SystemError.fromEvent(axonEvent));
-                return;
-              }
-              for (const [method, id] of pendingRequests) {
-                if (id !== undefined && id !== null) {
-                  // FIXME: this is a temporary fix to tell the client that we couldn't process the pending request
-                  // but this isn't quite right -- this message didn't originate from the agent, so this will cause
-                  // asymmetry.
-                  controller.enqueue({
-                    jsonrpc: "2.0",
-                    id,
-                    error: {
-                      code: -32000,
-                      message: axonEvent.payload,
-                      data: { event_type: axonEvent.event_type },
-                    },
-                  });
-                }
-                pendingRequests.delete(method);
-              }
-              controller.close();
-              return;
-            }
-
-            if (!isFromAgent(axonEvent)) {
-              log?.("read", `#${totalEvents} SKIP ${axonEvent.origin} ${axonEvent.event_type}`);
-              continue;
-            }
-
-            log?.("read", `#${totalEvents} ${axonEvent.event_type}`);
-            const msg = axonEventToJsonRpc(
-              axonEvent,
-              pendingRequests,
-              pendingClientRequests,
-              nextId,
-              onError,
-            );
-            if (msg) controller.enqueue(msg);
+            return "ended";
+          } finally {
+            unlinkAbort();
           }
-        } catch (err) {
-          if (signal?.aborted) break;
-          if (attempt === 1) {
-            onError(
-              `[axonStream] SSE stream error after ${eventCount} events, re-subscribing: ${err}`,
-            );
-            continue;
-          }
-          log?.("read", `error on reconnect attempt after ${eventCount} events: ${err}`);
-          controller.error(err);
-          return;
-        }
+        },
+      });
 
-        if (signal?.aborted) break;
+      if (controllerDone) return;
 
-        if (attempt === 1) {
-          onError(`[axonStream] SSE stream ended after ${eventCount} events, re-subscribing`);
-          continue;
-        }
-        break;
+      if (result.reason === "terminal") {
+        log?.("read", `terminal SSE error after ${totalEvents} total events: ${result.error}`);
+        controller.error(result.error);
+        return;
       }
 
       // If replay ended because the stream closed before reaching the target,
@@ -290,6 +308,26 @@ function createReadable(
       controller.close();
     },
   });
+}
+
+/**
+ * Wires the connection's abort signal to the live SSE stream so aborting
+ * the connection aborts the in-flight network read immediately. Returns a
+ * cleanup function that detaches the listener.
+ */
+function linkAbortToStream(
+  signal: AbortSignal | undefined,
+  sseStream: { controller?: { abort(): void } },
+): () => void {
+  const streamController = sseStream.controller;
+  if (!signal || !streamController) return () => {};
+  if (signal.aborted) {
+    streamController.abort();
+    return () => {};
+  }
+  const onAbort = (): void => streamController.abort();
+  signal.addEventListener("abort", onAbort, { once: true });
+  return () => signal.removeEventListener("abort", onAbort);
 }
 
 /**

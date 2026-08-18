@@ -11,7 +11,49 @@ import {
   type PublishCall,
 } from "../__test-utils__/mock-axon.js";
 import { SystemError } from "../shared/errors/system-error.js";
-import { axonStream } from "./axon-stream.js";
+import { axonStream as axonStreamImpl } from "./axon-stream.js";
+import type { AxonStreamOptions } from "./types.js";
+
+// ---------------------------------------------------------------------------
+// Test harness
+// ---------------------------------------------------------------------------
+
+/**
+ * Test wrapper around {@link axonStreamImpl}. The production readable
+ * resubscribes indefinitely, but mock axons hold a finite script of SSE
+ * streams — so this wrapper stops the loop (via an abort signal combined
+ * with the caller's) as soon as `subscribeSse` runs out of fresh streams,
+ * and makes backoff instantaneous and deterministic.
+ */
+function axonStream(options: AxonStreamOptions): ReturnType<typeof axonStreamImpl> {
+  const exhaustedController = new AbortController();
+  const seen = new Set<unknown>();
+  const axon = options.axon;
+  const wrappedAxon = {
+    ...axon,
+    subscribeSse: async (...args: unknown[]) => {
+      const stream = await (axon.subscribeSse as (...a: unknown[]) => Promise<unknown>)(...args);
+      if (stream == null || seen.has(stream)) {
+        exhaustedController.abort();
+        throw new Error("mock streams exhausted");
+      }
+      seen.add(stream);
+      return stream;
+    },
+  };
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, exhaustedController.signal])
+    : exhaustedController.signal;
+  return axonStreamImpl({
+    retry: { sleep: async () => {}, random: () => 1 },
+    // Silence the default console.error resubscribe notices; tests that
+    // care about them pass their own onError.
+    onError: () => {},
+    ...options,
+    axon: wrappedAxon as never,
+    signal,
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -568,24 +610,20 @@ describe("axonStream", () => {
   });
 
   describe("auto-reconnect", () => {
-    it("re-subscribes once when the SSE stream ends unexpectedly", async () => {
+    /** Builds an axon whose subscribeSse resolves each scripted stream in order. */
+    function makeSequencedAxon(streams: unknown[]) {
+      let fn = vi.fn();
+      for (const stream of streams) fn = fn.mockResolvedValueOnce(stream);
+      return { id: "test-axon", subscribeSse: fn, publish: vi.fn() };
+    }
+
+    it("re-subscribes when the SSE stream ends cleanly", async () => {
       const ctrl1 = createControllableStream();
       const ctrl2 = createControllableStream();
-      const published: PublishCall[] = [];
-      const axon = {
-        id: "test-axon",
-        subscribeSse: vi
-          .fn()
-          .mockResolvedValueOnce(ctrl1.stream)
-          .mockResolvedValueOnce(ctrl2.stream),
-        publish: vi.fn().mockImplementation(async (data: PublishCall) => {
-          published.push(data);
-        }),
-      };
+      const axon = makeSequencedAxon([ctrl1.stream, ctrl2.stream]);
+      const onError = vi.fn();
 
-      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
-      const { readable } = axonStream({ axon: axon as never });
+      const { readable } = axonStream({ axon: axon as never, onError });
 
       ctrl1.push(makeAgentEvent("session/update", { msg: "first" }));
       ctrl1.end();
@@ -597,28 +635,13 @@ describe("axonStream", () => {
       expect(messages).toHaveLength(2);
       expect(messages[0]).toMatchObject({ params: { msg: "first" } });
       expect(messages[1]).toMatchObject({ params: { msg: "second" } });
-      expect(axon.subscribeSse).toHaveBeenCalledTimes(2);
-      expect(errorSpy).toHaveBeenCalledWith(
-        "[axonStream]",
-        expect.stringContaining("SSE stream ended"),
-      );
-
-      errorSpy.mockRestore();
+      expect(onError).toHaveBeenCalledWith(expect.stringContaining("SSE stream ended"));
     });
 
     it("passes after_sequence on re-subscribe using last seen sequence", async () => {
       const ctrl1 = createControllableStream();
       const ctrl2 = createControllableStream();
-      const axon = {
-        id: "test-axon",
-        subscribeSse: vi
-          .fn()
-          .mockResolvedValueOnce(ctrl1.stream)
-          .mockResolvedValueOnce(ctrl2.stream),
-        publish: vi.fn(),
-      };
-
-      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const axon = makeSequencedAxon([ctrl1.stream, ctrl2.stream]);
 
       const { readable } = axonStream({ axon: axon as never });
 
@@ -631,39 +654,25 @@ describe("axonStream", () => {
 
       const messages = await drain(readable);
       expect(messages).toHaveLength(3);
-      expect(axon.subscribeSse).toHaveBeenCalledTimes(2);
       expect(axon.subscribeSse).toHaveBeenNthCalledWith(1, undefined);
       expect(axon.subscribeSse).toHaveBeenNthCalledWith(2, { after_sequence: 15 });
-
-      errorSpy.mockRestore();
+      // The wrapper's final call (mock exhausted) still carries the cursor.
+      expect(axon.subscribeSse).toHaveBeenNthCalledWith(3, { after_sequence: 16 });
     });
 
-    it("re-subscribes once on SSE stream error and continues", async () => {
-      const ctrl2 = createControllableStream();
-      let callCount = 0;
-      const axon = {
-        id: "test-axon",
-        subscribeSse: vi.fn().mockImplementation(async () => {
-          callCount++;
-          if (callCount === 1) {
-            return {
-              [Symbol.asyncIterator]() {
-                return {
-                  next() {
-                    return Promise.reject(new Error("connection lost"));
-                  },
-                };
-              },
-            };
-          }
-          return ctrl2.stream;
-        }),
-        publish: vi.fn(),
+    it("re-subscribes on SSE stream error and continues", async () => {
+      const failing = {
+        [Symbol.asyncIterator]() {
+          return {
+            next: () => Promise.reject(new Error("connection lost")),
+          };
+        },
       };
+      const ctrl2 = createControllableStream();
+      const axon = makeSequencedAxon([failing, ctrl2.stream]);
+      const onError = vi.fn();
 
-      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
-      const { readable } = axonStream({ axon: axon as never });
+      const { readable } = axonStream({ axon: axon as never, onError });
 
       ctrl2.push(makeAgentEvent("session/update", { msg: "recovered" }));
       ctrl2.end();
@@ -671,39 +680,104 @@ describe("axonStream", () => {
       const messages = await drain(readable);
       expect(messages).toHaveLength(1);
       expect(messages[0]).toMatchObject({ params: { msg: "recovered" } });
-      expect(axon.subscribeSse).toHaveBeenCalledTimes(2);
-      expect(errorSpy).toHaveBeenCalledWith(
-        "[axonStream]",
-        expect.stringContaining("SSE stream error"),
-      );
-
-      errorSpy.mockRestore();
+      expect(onError).toHaveBeenCalledWith(expect.stringContaining("SSE stream error"));
     });
 
-    it("closes the stream if the second subscription also fails", async () => {
+    it("keeps re-subscribing through several successive failures with backoff", async () => {
+      const makeFailing = (message: string) => ({
+        [Symbol.asyncIterator]() {
+          return { next: () => Promise.reject(new Error(message)) };
+        },
+      });
+      const ctrl = createControllableStream();
+      const axon = makeSequencedAxon([
+        makeFailing("blip 1"),
+        makeFailing("blip 2"),
+        makeFailing("blip 3"),
+        ctrl.stream,
+      ]);
+      const sleep = vi.fn().mockResolvedValue(undefined);
+
+      const { readable } = axonStream({
+        axon: axon as never,
+        retry: { sleep, random: () => 1, baseDelayMs: 100, maxDelayMs: 30_000 },
+      });
+
+      ctrl.push(makeAgentEvent("session/update", { msg: "recovered" }));
+      ctrl.end();
+
+      const messages = await drain(readable);
+      expect(messages).toHaveLength(1);
+      // Exponential backoff across the three failures, then a reset-to-base
+      // delay after the successful read before the final (exhausted) attempt.
+      expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([100, 200, 400, 100]);
+    });
+
+    it("re-subscribes after a close that follows a successful read (counter reset)", async () => {
+      const makeFailing = (message: string) => ({
+        [Symbol.asyncIterator]() {
+          return { next: () => Promise.reject(new Error(message)) };
+        },
+      });
+      const ctrl1 = createControllableStream();
+      const ctrl2 = createControllableStream();
+      const axon = makeSequencedAxon([
+        makeFailing("blip 1"),
+        makeFailing("blip 2"),
+        ctrl1.stream,
+        ctrl2.stream,
+      ]);
+      const sleep = vi.fn().mockResolvedValue(undefined);
+
+      const { readable } = axonStream({
+        axon: axon as never,
+        retry: { sleep, random: () => 1, baseDelayMs: 100, maxDelayMs: 30_000 },
+      });
+
+      ctrl1.push(makeAgentEvent("session/update", { msg: "first" }, 5));
+      ctrl1.end(); // a close long after a successful read must still resubscribe
+
+      ctrl2.push(makeAgentEvent("session/update", { msg: "after-close" }, 6));
+      ctrl2.end();
+
+      const messages = await drain(readable);
+      expect(messages).toHaveLength(2);
+      expect(axon.subscribeSse).toHaveBeenNthCalledWith(4, { after_sequence: 5 });
+      // Failures back off (100, 200); the successful read resets the counter,
+      // so both later clean ends wait only the base delay.
+      expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([100, 200, 100, 100]);
+    });
+
+    it("errors the stream without retrying when the subscription fails terminally", async () => {
+      const gone = Object.assign(new Error("axon not found"), { status: 404 });
       const axon = {
         id: "test-axon",
-        subscribeSse: vi.fn().mockImplementation(async () => ({
-          [Symbol.asyncIterator]() {
-            return {
-              next() {
-                return Promise.reject(new Error("permanent failure"));
-              },
-            };
-          },
-        })),
+        subscribeSse: vi.fn().mockRejectedValue(gone),
         publish: vi.fn(),
       };
-
-      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
       const { readable } = axonStream({ axon: axon as never });
 
       const reader = readable.getReader();
-      await expect(reader.read()).rejects.toThrow("permanent failure");
-      expect(axon.subscribeSse).toHaveBeenCalledTimes(2);
+      await expect(reader.read()).rejects.toThrow("axon not found");
+      expect(axon.subscribeSse).toHaveBeenCalledTimes(1);
+    });
 
-      errorSpy.mockRestore();
+    it("errors the stream when a mid-stream error is terminal", async () => {
+      const denied = Object.assign(new Error("forbidden"), { status: 403 });
+      const axon = makeSequencedAxon([
+        {
+          [Symbol.asyncIterator]() {
+            return { next: () => Promise.reject(denied) };
+          },
+        },
+      ]);
+
+      const { readable } = axonStream({ axon: axon as never });
+
+      const reader = readable.getReader();
+      await expect(reader.read()).rejects.toThrow("forbidden");
+      expect(axon.subscribeSse).toHaveBeenCalledTimes(1);
     });
 
     it("does NOT re-subscribe when signal is aborted", async () => {
@@ -726,6 +800,55 @@ describe("axonStream", () => {
 
       await drain(readable);
       expect(axon.subscribeSse).toHaveBeenCalledTimes(1);
+    });
+
+    it("aborts the in-flight SSE read when the signal aborts", async () => {
+      const ctrl = createControllableStream(true);
+      const axon = {
+        id: "test-axon",
+        subscribeSse: vi.fn().mockResolvedValue(ctrl.stream),
+        publish: vi.fn(),
+      };
+      const abortController = new AbortController();
+
+      const { readable } = axonStream({
+        axon: axon as never,
+        signal: abortController.signal,
+      });
+      const drained = drain(readable);
+
+      // Let the subscription open and deliver one event.
+      ctrl.push(makeAgentEvent("session/update", { msg: "live" }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      abortController.abort();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(ctrl.stream.controller?.abort).toHaveBeenCalledTimes(1);
+
+      // The mock's abort does not end iteration; end it so drain resolves.
+      ctrl.end();
+      const messages = await drained;
+      expect(messages).toHaveLength(1);
+    });
+
+    it("aborts a newly opened SSE stream when the signal is already aborted", async () => {
+      const ctrl = createControllableStream(true);
+      const axon = {
+        id: "test-axon",
+        subscribeSse: vi.fn().mockResolvedValue(ctrl.stream),
+        publish: vi.fn(),
+      };
+      const abortController = new AbortController();
+
+      const { readable } = axonStream({
+        axon: axon as never,
+        signal: abortController.signal,
+      });
+      abortController.abort();
+      ctrl.end();
+
+      await drain(readable);
+      expect(ctrl.stream.controller?.abort).toHaveBeenCalledTimes(1);
     });
   });
 
