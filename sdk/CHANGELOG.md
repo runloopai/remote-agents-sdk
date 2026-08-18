@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.10](https://github.com/runloopai/remote-agents-sdk/compare/remote-agents-sdk-v0.4.9...remote-agents-sdk-v0.4.10) (2026-08-18)
+
+
+### Features
+
+* **codex:** allow a caller-set event source on the Codex connection ([#169](https://github.com/runloopai/remote-agents-sdk/issues/169)) ([e26c1e3](https://github.com/runloopai/remote-agents-sdk/commit/e26c1e3493b300109db27c6f93047c75e4f6ff24))
+
 ## [0.4.9](https://github.com/runloopai/remote-agents-sdk/compare/remote-agents-sdk-v0.4.8...remote-agents-sdk-v0.4.9) (2026-08-18)
 
 
