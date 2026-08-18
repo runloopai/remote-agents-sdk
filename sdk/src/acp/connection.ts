@@ -210,6 +210,7 @@ export class ACPAxonConnection {
       afterSequence: this.options.afterSequence,
       replayTargetSequence,
       source: () => this.currentSource,
+      retry: this.options.retry,
     });
 
     const customCreateClient = this.options.createClient;

@@ -586,7 +586,7 @@ describe("CodexAxonConnection", () => {
     });
   });
 
-  it("auto-reconnects once after a transient stream error", async () => {
+  it("auto-reconnects after a transient stream error", async () => {
     const second = createControllableStream(true);
     const failing = {
       controller: { abort: vi.fn() },
@@ -601,15 +601,17 @@ describe("CodexAxonConnection", () => {
     const axon = {
       id: "axon",
       publish: vi.fn(),
-      subscribeSse: vi.fn().mockResolvedValueOnce(failing).mockResolvedValueOnce(second.stream),
+      subscribeSse: vi.fn().mockResolvedValueOnce(failing).mockResolvedValue(second.stream),
     };
     const conn = new CodexAxonConnection(axon as never, { id: "dbx" } as never, {
       replay: false,
       onError: vi.fn(),
+      retry: { sleep: async () => {}, random: () => 1 },
     });
     await conn.connect();
     await tick();
     expect(axon.subscribeSse).toHaveBeenCalledTimes(2);
+    await conn.disconnect();
     second.end();
   });
 
@@ -684,7 +686,7 @@ describe("CodexAxonConnection", () => {
     expect(methods.filter((method) => method === "turn/start")).toHaveLength(2);
   });
 
-  it("rejects in-flight requests after the single reconnect attempt also fails", async () => {
+  it("rejects in-flight requests when the stream fails terminally", async () => {
     const createFailableStream = () => {
       let failWith: ((error: Error) => void) | undefined;
       return {
@@ -703,30 +705,25 @@ describe("CodexAxonConnection", () => {
       };
     };
     const first = createFailableStream();
-    const second = createFailableStream();
     const axon = {
       id: "axon",
       publish: vi.fn(),
-      subscribeSse: vi
-        .fn()
-        .mockResolvedValueOnce(first.stream)
-        .mockResolvedValueOnce(second.stream),
+      subscribeSse: vi.fn().mockResolvedValueOnce(first.stream),
     };
     const conn = new CodexAxonConnection(axon as never, { id: "dbx" } as never, {
       replay: false,
       onError: vi.fn(),
+      retry: { sleep: async () => {}, random: () => 1 },
     });
     await conn.connect();
     const observed = conn.readConfig().then(
       () => undefined,
       (error: Error) => error,
     );
-    first.fail(new Error("blip 1"));
+    first.fail(Object.assign(new Error("axon gone"), { status: 404 }));
     await tick();
-    second.fail(new Error("blip 2"));
-    await tick();
-    expect(axon.subscribeSse).toHaveBeenCalledTimes(2);
-    expect(await observed).toMatchObject({ message: "blip 2" });
+    expect(axon.subscribeSse).toHaveBeenCalledTimes(1);
+    expect(await observed).toMatchObject({ message: "axon gone" });
   });
 
   it("answers with a JSON-RPC error when an approval handler throws", async () => {

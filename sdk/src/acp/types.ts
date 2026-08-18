@@ -14,6 +14,7 @@ import type {
 } from "@agentclientprotocol/sdk";
 import type { AxonEventView } from "@runloop/api-client/resources/axons";
 import type { Axon } from "@runloop/api-client/sdk";
+import type { ResubscribeTuning } from "../shared/stream-resubscribe.js";
 import type {
   BaseConnectionOptions,
   BaseTimelineEvent,
@@ -65,6 +66,12 @@ export interface AxonStreamOptions {
    * @defaultValue `"acp-sdk-client"`
    */
   source?: string | (() => string | undefined);
+
+  /**
+   * Backoff tuning overrides for the SSE resubscribe engine.
+   * @internal
+   */
+  retry?: ResubscribeTuning;
 }
 
 /**

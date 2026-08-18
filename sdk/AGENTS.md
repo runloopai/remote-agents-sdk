@@ -376,13 +376,15 @@ await conn2.connect();
 ### Automatic reconnect
 
 If the SSE stream drops mid-session, the SDK automatically re-subscribes
-**once** using the last-seen sequence number — no events are lost during a
-transient disconnect. If the retry also fails, the connection is terminal;
-create a new instance.
+**indefinitely** using the last-seen sequence number — no events are lost
+during a transient disconnect. Retries use exponential backoff that resets
+once a stream is healthy again. Only non-retryable errors (4xx HTTP statuses
+other than 408/429) are terminal; when one occurs the connection surfaces the
+error and you must create a new instance.
 
 ## Constraints and gotchas
 
-- **Auto-reconnect (single retry).** If an SSE stream drops unexpectedly, the SDK re-subscribes once. ACP logs a `console.warn`; Claude logs only when `verbose: true` is set. If the retry also fails, the connection is terminal — create a new instance.
+- **Auto-reconnect (indefinite).** If an SSE stream drops unexpectedly, the SDK re-subscribes from the last-seen sequence with exponential backoff (reset once the stream is healthy again). ACP logs a `console.warn`; Claude logs only when `verbose: true` is set. Non-retryable errors (4xx other than 408/429) are terminal — the error is surfaced and you must create a new instance.
 - **ACP permissions default to auto-approve** (`allow_always` > `allow_once` > first option). Pass `requestPermission` to customize.
 - **Claude permissions also auto-approve** all tool use. Register a `"can_use_tool"` handler via `onControlRequest()` to customize.
 - **Codex approvals auto-approve, while MCP elicitations cancel safely** by default. Register handlers via `onApprovalRequest()` to customize, or mount with `launch_args: ["-c", "approval_policy=never"]` for headless full-auto.

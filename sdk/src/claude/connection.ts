@@ -550,6 +550,7 @@ export class ClaudeAxonConnection {
         this.messageQueue.close(false);
       },
       log: this.log,
+      retry: this.options.retry,
     });
   }
 

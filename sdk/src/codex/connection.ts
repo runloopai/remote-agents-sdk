@@ -381,6 +381,7 @@ export class CodexAxonConnection {
         this.messageQueue.close(false);
       },
       log: this.log,
+      retry: this.options.retry,
     });
   }
 
