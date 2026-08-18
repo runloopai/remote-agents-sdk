@@ -1,6 +1,6 @@
 {
   "name": "@runloop/remote-agents-sdk",
-  "version": "0.4.9",
+  "version": "0.4.10",
   "description": "TypeScript SDK for connecting to Runloop-hosted remote agents using Axons",
   "license": "MIT",
   "author": "Runloop, Inc.",
