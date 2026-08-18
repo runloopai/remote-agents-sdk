@@ -32,6 +32,45 @@ describe("CodexAxonConnection", () => {
     expect(conn.isDisconnected).toBe(true);
   });
 
+  describe("source / setSource()", () => {
+    /** Answers every request frame so initialize() completes. */
+    function setupResponding(options: Record<string, unknown> = {}) {
+      const { ctrl, mock, conn } = setup(options);
+      mock.axon.publish.mockImplementation(async (event) => {
+        const frame = JSON.parse(event.payload);
+        if (frame.id != null) ctrl.push(makeAgentEvent("response", { id: frame.id, result: {} }));
+      });
+      return { mock, conn };
+    }
+
+    it("defaults to undefined (transport supplies the built-in default)", async () => {
+      const { mock, conn } = setupResponding();
+      await conn.connect();
+      expect(conn.source).toBeUndefined();
+      await conn.initialize();
+      expect(mock.axon.publish.mock.calls[0]?.[0].source).toBe("codex-sdk-client");
+    });
+
+    it("reflects the value passed via options and stamps published events", async () => {
+      const { mock, conn } = setupResponding({ source: "from-options" });
+      expect(conn.source).toBe("from-options");
+      await conn.connect();
+      await conn.initialize();
+      expect(mock.axon.publish.mock.calls[0]?.[0].source).toBe("from-options");
+    });
+
+    it("updates the current source via setSource() for later publishes", async () => {
+      const { mock, conn } = setupResponding();
+      await conn.connect();
+      conn.setSource("my-client");
+      expect(conn.source).toBe("my-client");
+      await conn.initialize();
+      expect(mock.axon.publish.mock.calls[0]?.[0].source).toBe("my-client");
+      conn.setSource(undefined);
+      expect(conn.source).toBeUndefined();
+    });
+  });
+
   it("runs the initialize handshake then sends turn/start and interrupt frames", async () => {
     const { ctrl, mock, conn } = setup();
     mock.axon.publish.mockImplementation(async (event) => {

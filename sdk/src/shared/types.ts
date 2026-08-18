@@ -216,8 +216,9 @@ export interface BaseConnectionOptions {
    * the Axon API. Use it to identify which client produced a user prompt
    * (e.g. distinguishing multiple integrations writing to the same channel).
    *
-   * Defaults to the built-in client identifier (`"claude-sdk-client"` or
-   * `"acp-sdk-client"` depending on the connection type).
+   * Defaults to the built-in client identifier (`"claude-sdk-client"`,
+   * `"acp-sdk-client"`, or `"codex-sdk-client"` depending on the connection
+   * type).
    */
   source?: string;
 }

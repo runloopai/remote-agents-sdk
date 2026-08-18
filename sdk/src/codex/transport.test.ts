@@ -26,6 +26,37 @@ describe("CodexAxonTransport", () => {
     });
   });
 
+  it("uses a custom source when provided via options", async () => {
+    const ctrl = createControllableStream(true);
+    const { axon, published } = createMockAxon(ctrl);
+    const transport = new CodexAxonTransport(axon as never, { source: "my-custom-client" });
+    await transport.connect();
+    await transport.write({ method: "turn/start", id: "codex-sdk-1", params: {} });
+    expect(published[0]?.source).toBe("my-custom-client");
+  });
+
+  it("resolves the source lazily on each write when given a resolver", async () => {
+    const ctrl = createControllableStream(true);
+    const { axon, published } = createMockAxon(ctrl);
+    let current = "first";
+    const transport = new CodexAxonTransport(axon as never, { source: () => current });
+    await transport.connect();
+    await transport.write({ method: "turn/start", id: "codex-sdk-1", params: {} });
+    current = "second";
+    await transport.write({ method: "turn/start", id: "codex-sdk-2", params: {} });
+    expect(published[0]?.source).toBe("first");
+    expect(published[1]?.source).toBe("second");
+  });
+
+  it("falls back to the default when the resolver returns undefined", async () => {
+    const ctrl = createControllableStream(true);
+    const { axon, published } = createMockAxon(ctrl);
+    const transport = new CodexAxonTransport(axon as never, { source: () => undefined });
+    await transport.connect();
+    await transport.write({ method: "turn/start", id: "codex-sdk-1", params: {} });
+    expect(published[0]?.source).toBe("codex-sdk-client");
+  });
+
   it("uses response for outbound response frames", async () => {
     const ctrl = createControllableStream(true);
     const { axon, published } = createMockAxon(ctrl);

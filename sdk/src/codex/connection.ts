@@ -165,6 +165,13 @@ export class CodexAxonConnection {
   private readonly serverRequestResolutionWaiters = new Map<string | number, () => void>();
   private readonly handleError: (error: unknown) => void;
   private readonly log;
+  /**
+   * The `source` attached to outbound events. Read by the transport at
+   * publish time, so mutating it via {@link setSource} affects subsequent
+   * messages without recreating the transport. `undefined` means the
+   * transport's built-in default is used.
+   */
+  private currentSource: string | undefined;
   constructor(
     private readonly axon: Axon,
     devbox: Devbox,
@@ -174,6 +181,7 @@ export class CodexAxonConnection {
     this.devboxId = devbox.id;
     this.handleError = options.onError ?? makeDefaultOnError("CodexAxonConnection");
     this.log = makeLogger("codex-sdk", options.verbose ?? false);
+    this.currentSource = options.source;
     this.axonListeners = new ListenerSet(this.handleError);
     this.timelineListeners = new ListenerSet(this.handleError);
     this.messageQueue = new AsyncMessageQueue(1000, (size) =>
@@ -208,6 +216,28 @@ export class CodexAxonConnection {
     return this._initializeResponse;
   }
   /**
+   * The `source` string currently attached to events published by this
+   * connection (e.g. user prompts via {@link send}). `undefined` means the
+   * built-in default (`"codex-sdk-client"`) is used.
+   */
+  get source(): string | undefined {
+    return this.currentSource;
+  }
+  /**
+   * Sets the `source` string attached to subsequently published events.
+   *
+   * Takes effect immediately and applies to every later message published
+   * through the transport (such as {@link send}) until changed again — set
+   * it before a message to control that message's `source`. Pass `undefined`
+   * to restore the built-in default. (The lower-level {@link publish} method
+   * is unaffected; it sets `source` directly from its params.)
+   *
+   * @param source - The source identifier, or `undefined` for the default.
+   */
+  setSource(source: string | undefined): void {
+    this.currentSource = source;
+  }
+  /**
    * Opens the SSE transport and starts its read loop. Call {@link initialize}
    * next — the app-server rejects requests until the handshake completes.
    * @throws {@link ConnectionStateError} with `terminated` or `already_connected`.
@@ -233,6 +263,7 @@ export class CodexAxonConnection {
       verbose: this.options.verbose,
       afterSequence: this.options.afterSequence,
       replayTargetSequence,
+      source: () => this.currentSource,
       onAxonEvent: (event) => {
         this.axonListeners.emit(event);
         this.timelineListeners.emit(classifyCodexAxonEvent(event));
