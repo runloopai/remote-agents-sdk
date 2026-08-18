@@ -17,7 +17,20 @@ export interface CodexAxonTransportOptions {
   onAxonEvent?: (event: AxonEventView) => void;
   afterSequence?: number;
   replayTargetSequence?: number;
+  /**
+   * The `source` string attached to every published Axon event, or a
+   * resolver invoked at publish time to obtain it. Use the resolver form to
+   * change the `source` between messages without recreating the transport
+   * (e.g. `() => this.currentSource`). When omitted, or when the resolver
+   * returns `undefined`, the default is used.
+   *
+   * @defaultValue `"codex-sdk-client"`
+   */
+  source?: string | (() => string | undefined);
 }
+
+/** Default `source` used when publishing events from the Codex SDK transport. */
+const DEFAULT_SOURCE = "codex-sdk-client";
 
 export interface CodexTransport {
   connect(): Promise<void>;
@@ -46,7 +59,10 @@ export class CodexAxonTransport implements CodexTransport {
     };
     this.inner = new AxonFrameTransport(axon, {
       ...options,
-      source: "codex-sdk-client",
+      source: () => {
+        const value = typeof options.source === "function" ? options.source() : options.source;
+        return value ?? DEFAULT_SOURCE;
+      },
       logPrefix: "codex-axon-transport",
       parseFrame,
       resolveEventType: (frame) => frame?.method ?? RESPONSE_EVENT_TYPE,
