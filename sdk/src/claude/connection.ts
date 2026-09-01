@@ -132,6 +132,18 @@ export interface ClaudeAxonConnectionOptions extends BaseConnectionOptions {
    * handshake completes.
    */
   model?: string;
+
+  /**
+   * When `true`, agent events are buffered until a pull-side generator
+   * ({@link ClaudeAxonConnection.receiveAgentEvents | receiveAgentEvents}) drains them. Set to `false` for a
+   * connection consumed only through push-side listeners and request/response
+   * methods: an event is delivered to a generator that is already awaiting it
+   * and otherwise dropped, so the buffer never grows on a long-lived
+   * connection nobody drains.
+   *
+   * @defaultValue `true`
+   */
+  bufferAgentEvents?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -284,11 +296,15 @@ export class ClaudeAxonConnection {
     this.timelineEventListeners = new ListenerSet<TimelineEventListener<ClaudeTimelineEvent>>(
       this.handleError,
     );
-    this.messageQueue = new AsyncMessageQueue(1000, (size) =>
-      this.handleError(
-        `[ClaudeAxonConnection] Message queue has ${size} buffered messages. ` +
-          "Ensure you are consuming messages via receiveMessages() or receiveResponse().",
-      ),
+    this.messageQueue = new AsyncMessageQueue(
+      1000,
+      (size) =>
+        this.handleError(
+          `[ClaudeAxonConnection] Message queue has ${size} buffered messages. ` +
+            "Ensure you are consuming messages via receiveAgentEvents() or receiveAgentResponse(), " +
+            "or pass bufferAgentEvents: false.",
+        ),
+      options?.bufferAgentEvents ?? true,
     );
   }
 

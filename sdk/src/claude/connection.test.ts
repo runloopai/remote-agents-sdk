@@ -116,6 +116,7 @@ async function createConnectedClient(
     onError?: (error: unknown) => void;
     systemPrompt?: string;
     appendSystemPrompt?: string;
+    bufferAgentEvents?: boolean;
   },
 ) {
   const axon = createMockAxon();
@@ -125,6 +126,7 @@ async function createConnectedClient(
     onError: options?.onError,
     systemPrompt: options?.systemPrompt,
     appendSystemPrompt: options?.appendSystemPrompt,
+    bufferAgentEvents: options?.bufferAgentEvents,
     replay: false,
   });
 
@@ -387,6 +389,57 @@ describe("ClaudeAxonConnection", () => {
         messages.push(msg as unknown as WireData);
       }
       expect(messages).toHaveLength(1);
+    });
+  });
+
+  describe("bufferAgentEvents: false", () => {
+    it("drops SDK messages that arrive while nobody is receiving", async () => {
+      const onError = vi.fn();
+      const conn = await createConnectedClient(transport, { onError, bufferAgentEvents: false });
+
+      transport._push({ type: "assistant", content: "unread" });
+      transport._push({ type: "result", cost: 0.01 });
+      await new Promise((r) => setTimeout(r, 0));
+      conn.abortStream();
+      transport._end();
+
+      const messages: WireData[] = [];
+      for await (const msg of conn.receiveAgentEvents()) {
+        messages.push(msg as unknown as WireData);
+      }
+      expect(messages).toHaveLength(0);
+      expect(onError).not.toHaveBeenCalled();
+    });
+
+    it("still delivers a live message to an awaiting receiver", async () => {
+      const conn = await createConnectedClient(transport, { bufferAgentEvents: false });
+
+      const iterator = conn.receiveAgentEvents();
+      const pending = iterator.next();
+      await new Promise((r) => setTimeout(r, 0));
+      transport._push({ type: "assistant", content: "live" });
+
+      expect((await pending).value).toMatchObject({ type: "assistant", content: "live" });
+      await iterator.return();
+      conn.abortStream();
+      transport._end();
+    });
+
+    it("still resolves pending control requests", async () => {
+      const conn = await createConnectedClient(transport, { bufferAgentEvents: false });
+
+      (transport.write as ReturnType<typeof vi.fn>).mockImplementation(async (data: string) => {
+        transport._written.push(data);
+        const parsed = JSON.parse(data);
+        if (parsed.request?.subtype === "set_permission_mode") {
+          transport._push({
+            type: "control_response",
+            response: { subtype: "success", request_id: parsed.request_id, response: {} },
+          });
+        }
+      });
+
+      await expect(conn.setPermissionMode("acceptEdits" as never)).resolves.toBeUndefined();
     });
   });
 

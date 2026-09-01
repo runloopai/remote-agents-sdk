@@ -1,4 +1,9 @@
-/** Single-consumer asynchronous queue used by protocol connection pull surfaces. */
+/**
+ * Single-consumer asynchronous queue used by protocol connection pull surfaces.
+ *
+ * With `buffer` set to `false` a pushed value is handed to a pending
+ * `next()` waiter or discarded; nothing is ever stored for a later drain.
+ */
 export class AsyncMessageQueue<T> {
   private values: T[] = [];
   private waiters: Array<(value: T | null) => void> = [];
@@ -8,12 +13,13 @@ export class AsyncMessageQueue<T> {
   constructor(
     private readonly highWaterMark = 1000,
     private readonly onHighWater?: (size: number) => void,
+    private readonly buffer = true,
   ) {}
 
   push(value: T): void {
     const waiter = this.waiters.shift();
     if (waiter) waiter(value);
-    else {
+    else if (this.buffer) {
       this.values.push(value);
       if (!this.warned && this.values.length >= this.highWaterMark) {
         this.warned = true;

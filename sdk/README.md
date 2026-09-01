@@ -464,6 +464,7 @@ Bidirectional, interactive client for Claude Code via Axon. Messages are yielded
 | `onDisconnect` | `() => void \| Promise<void>` | Teardown callback invoked by `disconnect()` (e.g. devbox shutdown) |
 | `afterSequence` | `number` | Resume from this Axon sequence number — only events after it are delivered. **Mutually exclusive with `replay`.** |
 | `replay` | `boolean` | When `true` (the default), replays historical events without dispatching protocol handlers until replay completes; timeline listeners still receive events. Set to `false` for legacy behavior. **Mutually exclusive with `afterSequence`.** |
+| `bufferAgentEvents` | `boolean` | When `true` (the default), agent events are buffered until `receiveAgentEvents()` / `receiveAgentResponse()` drains them. Set to `false` when you consume the connection only through listeners and request/response methods — events are then delivered to an awaiting generator or dropped, so the buffer never grows on a connection nobody drains. |
 
 **Listeners & Lifecycle**:
 
@@ -581,6 +582,7 @@ Like ACP/Claude, call `initialize()` after `connect()` — it runs the app-serve
 | `onDisconnect` | `() => void \| Promise<void>` | Teardown callback invoked by `disconnect()` (e.g. devbox shutdown) |
 | `afterSequence` | `number` | Resume from this Axon sequence number — only events after it are delivered. **Mutually exclusive with `replay`.** |
 | `replay` | `boolean` | When `true` (the default), replays historical events without re-dispatching already-answered approval requests; timeline listeners still receive events. **Mutually exclusive with `afterSequence`.** |
+| `bufferAgentEvents` | `boolean` | When `true` (the default), agent events are buffered until `receiveAgentEvents()` / `receiveTurn()` drains them. Set to `false` when you consume the connection only through listeners and request/response methods — events are then delivered to an awaiting generator or dropped, so the buffer never grows on a connection nobody drains. |
 
 **Listeners & Lifecycle**:
 
