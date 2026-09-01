@@ -695,6 +695,49 @@ describe("CodexAxonConnection", () => {
     expect(frames.map((frame) => frame.method)).toEqual(["turn/started", "turn/completed"]);
   });
 
+  it("drops agent frames while nobody is receiving when bufferAgentEvents is false", async () => {
+    const onError = vi.fn();
+    const { ctrl, conn } = setup({ onError, bufferAgentEvents: false });
+    await conn.connect();
+    ctrl.push(
+      makeAgentEvent("thread/started", {
+        method: "thread/started",
+        params: { thread: { id: "thr-1" } },
+      }),
+    );
+    ctrl.push(
+      makeAgentEvent("turn/started", {
+        method: "turn/started",
+        params: { threadId: "thr-1", turn: { id: "turn-1" } },
+      }),
+    );
+    await tick();
+    // route() side effects still run on the discard path.
+    expect(conn.threadId).toBe("thr-1");
+    expect(conn.currentTurnId).toBe("turn-1");
+    // A receiver attached later sees only what arrives after it, never the backlog.
+    const iterator = conn.receiveAgentEvents();
+    const pending = iterator.next();
+    await tick();
+    ctrl.push(makeAgentEvent("turn/completed", { method: "turn/completed", params: {} }));
+    expect((await pending).value).toMatchObject({ method: "turn/completed" });
+    await iterator.return(undefined);
+    await conn.disconnect();
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("still delivers a live frame to an awaiting receiver when bufferAgentEvents is false", async () => {
+    const { ctrl, conn } = setup({ bufferAgentEvents: false });
+    await conn.connect();
+    const iterator = conn.receiveAgentEvents();
+    const pending = iterator.next();
+    await tick();
+    ctrl.push(makeAgentEvent("turn/started", { method: "turn/started", params: {} }));
+    expect((await pending).value).toMatchObject({ method: "turn/started" });
+    await iterator.return(undefined);
+    await conn.disconnect();
+  });
+
   it("supports a connect → disconnect → connect cycle on the same instance", async () => {
     const ctrls = [createControllableStream(true), createControllableStream(true)];
     let active = 0;

@@ -120,6 +120,18 @@ export interface CodexAxonConnectionOptions extends BaseConnectionOptions {
    * this SDK as the client with no extra capabilities.
    */
   initializeParams?: Partial<InitializeParams>;
+
+  /**
+   * When `true`, agent events are buffered until a pull-side generator
+   * ({@link CodexAxonConnection.receiveAgentEvents | receiveAgentEvents}) drains them. Set to `false` for a
+   * connection consumed only through push-side listeners and request/response
+   * methods: an event is delivered to a generator that is already awaiting it
+   * and otherwise dropped, so the buffer never grows on a long-lived
+   * connection nobody drains.
+   *
+   * @defaultValue `true`
+   */
+  bufferAgentEvents?: boolean;
 }
 /**
  * Native Codex app-server connection over an Axon channel.
@@ -184,11 +196,15 @@ export class CodexAxonConnection {
     this.currentSource = options.source;
     this.axonListeners = new ListenerSet(this.handleError);
     this.timelineListeners = new ListenerSet(this.handleError);
-    this.messageQueue = new AsyncMessageQueue(1000, (size) =>
-      this.handleError(
-        `[CodexAxonConnection] Message queue has ${size} buffered messages. ` +
-          "Ensure you are consuming messages via receiveAgentEvents() or receiveTurn().",
-      ),
+    this.messageQueue = new AsyncMessageQueue(
+      1000,
+      (size) =>
+        this.handleError(
+          `[CodexAxonConnection] Message queue has ${size} buffered messages. ` +
+            "Ensure you are consuming messages via receiveAgentEvents() or receiveTurn(), " +
+            "or pass bufferAgentEvents: false.",
+        ),
+      options.bufferAgentEvents ?? true,
     );
     for (const [method, handler] of Object.entries(options.approvalHandlers ?? {}))
       if (handler) this.handlers.set(method, handler);

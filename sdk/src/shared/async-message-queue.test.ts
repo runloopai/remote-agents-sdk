@@ -76,4 +76,30 @@ describe("AsyncMessageQueue", () => {
     expect(await queue.next()).toBe("post-close");
     expect(await queue.next()).toBeNull();
   });
+
+  describe("buffer: false", () => {
+    it("discards values pushed while nobody is waiting", async () => {
+      const queue = new AsyncMessageQueue<string>(1000, undefined, false);
+      queue.push("dropped");
+      const pending = queue.next();
+      queue.push("live");
+      expect(await pending).toBe("live");
+    });
+
+    it("never fires the high-water callback", () => {
+      const onHighWater = vi.fn();
+      const queue = new AsyncMessageQueue<number>(2, onHighWater, false);
+      queue.push(1);
+      queue.push(2);
+      queue.push(3);
+      expect(onHighWater).not.toHaveBeenCalled();
+    });
+
+    it("still resolves null once closed", async () => {
+      const queue = new AsyncMessageQueue<string>(1000, undefined, false);
+      queue.push("dropped");
+      queue.close(false);
+      expect(await queue.next()).toBeNull();
+    });
+  });
 });
