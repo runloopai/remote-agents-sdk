@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.11](https://github.com/runloopai/remote-agents-sdk/compare/remote-agents-sdk-v0.4.10...remote-agents-sdk-v0.4.11) (2026-09-01)
+
+
+### Bug Fixes
+
+* **sdk:** add bufferAgentEvents option so undrained connections stop growing ([#174](https://github.com/runloopai/remote-agents-sdk/issues/174)) ([c90eb3f](https://github.com/runloopai/remote-agents-sdk/commit/c90eb3f5af12b99ab48e2b24bd25323d18f0707d))
+
 ## [0.4.10](https://github.com/runloopai/remote-agents-sdk/compare/remote-agents-sdk-v0.4.9...remote-agents-sdk-v0.4.10) (2026-08-18)
 
 
