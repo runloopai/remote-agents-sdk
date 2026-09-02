@@ -26,11 +26,31 @@ describe("resolveReplayTarget", () => {
     expect(result).toBeUndefined();
   });
 
-  it("throws when both replay and afterSequence are set", async () => {
+  it("resolves the head when replay and afterSequence are both set (bounded replay)", async () => {
     const axon = makeMockAxon(10);
-    await expect(
-      resolveReplayTarget(axon as never, { replay: true, afterSequence: 5 }, log),
-    ).rejects.toThrow("Cannot use both 'replay' and 'afterSequence'");
+    const result = await resolveReplayTarget(
+      axon as never,
+      { replay: true, afterSequence: 5 },
+      log,
+    );
+    expect(result).toBe(10);
+  });
+
+  it("resolves the head when afterSequence is set and replay is left at its default", async () => {
+    const axon = makeMockAxon(10);
+    const result = await resolveReplayTarget(axon as never, { afterSequence: 5 }, log);
+    expect(result).toBe(10);
+  });
+
+  it("returns undefined when replay is false and afterSequence is set (live-only)", async () => {
+    const axon = makeMockAxon(10);
+    const result = await resolveReplayTarget(
+      axon as never,
+      { replay: false, afterSequence: 5 },
+      log,
+    );
+    expect(result).toBeUndefined();
+    expect(axon.client.get).not.toHaveBeenCalled();
   });
 
   it("returns undefined when axon has no events (total_count is null)", async () => {

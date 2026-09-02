@@ -98,6 +98,35 @@ describe("CodexAxonTransport", () => {
     ]);
   });
 
+  it("bounded replay: pairs requests with answers inside (afterSequence, target] only", async () => {
+    const ctrl = createControllableStream(true);
+    const { axon } = createMockAxon(ctrl);
+    const transport = new CodexAxonTransport(axon as never, {
+      afterSequence: 10,
+      replayTargetSequence: 13,
+    });
+    await transport.connect();
+    expect(axon.subscribeSse).toHaveBeenCalledWith({ after_sequence: 10 });
+
+    ctrl.push(makeAgentEvent("item/tool/call", { method: "item/tool/call", id: 1 }, 11));
+    ctrl.push(makeUserEvent("response", { id: 1, result: {} }, 12));
+    ctrl.push(
+      makeAgentEvent(
+        "item/commandExecution/requestApproval",
+        { method: "item/commandExecution/requestApproval", id: 2, params: {} },
+        13,
+      ),
+    );
+    ctrl.push(makeAgentEvent("turn/started", { method: "turn/started", params: {} }, 14));
+    ctrl.end();
+    const frames = [];
+    for await (const frame of transport.readMessages()) frames.push(frame);
+    expect(frames).toEqual([
+      { method: "item/commandExecution/requestApproval", id: 2, params: {} },
+      { method: "turn/started", params: {} },
+    ]);
+  });
+
   it("does not replay a server request cleared by serverRequest/resolved", async () => {
     const ctrl = createControllableStream(true);
     const { axon } = createMockAxon(ctrl);

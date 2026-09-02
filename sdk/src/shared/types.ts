@@ -182,16 +182,31 @@ export interface BaseConnectionOptions {
   /**
    * Axon sequence number to resume from. When set, the initial SSE
    * subscription uses `{ after_sequence }` so only events **after** this
-   * sequence are delivered — earlier events are skipped.
+   * sequence are delivered — earlier events are never requested.
    *
-   * Omit (or pass `undefined`) to replay the full event history from the
-   * beginning of the Axon channel.
+   * Omit (or pass `undefined`) to start from the beginning of the Axon
+   * channel.
+   *
+   * Composes with {@link replay}:
+   * - `replay: true` (the default) — bounded replay. The connection still
+   *   resolves the channel head and treats the events in
+   *   `(afterSequence, head]` as history: timeline listeners receive each
+   *   one, control/permission requests are paired with their answers, and
+   *   only the still-unanswered requests reach handlers once the head is
+   *   passed. If the head is at or below `afterSequence` there is nothing
+   *   to replay and the first event delivered is live.
+   * - `replay: false` — live-only. Every event after `afterSequence` is
+   *   dispatched to handlers as it arrives, including requests that a
+   *   later event in the log already answered.
    *
    * Typical usage: persist `AxonEventView.sequence` from a previous
-   * session and pass it here to avoid re-processing events you have
-   * already seen.
+   * session, or the start of the turn you care about, and pass it here so
+   * a long-lived channel does not replay from sequence 0.
    *
-   * Mutually exclusive with {@link replay}.
+   * Codex: with a bound past the `thread/started` frame the connection
+   * never observes the thread id, so `threadId` stays `undefined` after
+   * `connect()`. Seed it with the Codex `threadId` option or call
+   * `resumeThread(threadId)`.
    */
   afterSequence?: number;
 
@@ -205,7 +220,8 @@ export interface BaseConnectionOptions {
    * Set to `false` to replay the full history with handlers firing for
    * every event (legacy behavior).
    *
-   * Mutually exclusive with {@link afterSequence}.
+   * Combine with {@link afterSequence} to bound the replayed range to
+   * `(afterSequence, head]` instead of the whole channel.
    *
    * @defaultValue `true`
    */

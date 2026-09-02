@@ -273,8 +273,8 @@ Higher-level wrapper that manages an `axonStream`, an `AbortController`, and the
 | `requestPermission` | `(params) => Promise<Response>` | Custom permission handler (defaults to auto-approve) |
 | `onError` | `(error: unknown) => void` | Error callback (defaults to `console.error`) |
 | `onDisconnect` | `() => void \| Promise<void>` | Teardown callback invoked by `disconnect()` (e.g. devbox shutdown) |
-| `afterSequence` | `number` | Resume from this Axon sequence number — only events after it are delivered. **Mutually exclusive with `replay`.** |
-| `replay` | `boolean` | When `true` (the default), replays historical events without dispatching to session/permission handlers until replay completes; timeline listeners still receive events. Set to `false` for legacy behavior (handlers run for every replayed event). **Mutually exclusive with `afterSequence`.** |
+| `afterSequence` | `number` | Resume from this Axon sequence number — only events after it are delivered. Composes with `replay`: replay from `afterSequence` with request/answer pairing (default) or live-only after `afterSequence` (`replay: false`). |
+| `replay` | `boolean` | When `true` (the default), replays historical events without dispatching to session/permission handlers until replay completes; timeline listeners still receive events. Set to `false` for legacy behavior (handlers run for every replayed event). With `afterSequence`, only `(afterSequence, head]` is replayed. |
 
 **ACP Methods** (proxied from `ClientSideConnection`):
 
@@ -368,8 +368,8 @@ Low-level function that creates an ACP-compatible duplex stream backed by an `Ax
 | `signal` | `AbortSignal` | No | Cancellation signal |
 | `onAxonEvent` | `(event: AxonEventView) => void` | No | Callback for every Axon event |
 | `onError` | `(error: unknown) => void` | No | Callback for swallowed parse errors |
-| `afterSequence` | `number` | No | Resume from this sequence — only events after it are delivered. Mutually exclusive with `replayTargetSequence`. On `ACPAxonConnection`, the connection-level `replay` option (default `true`) is mutually exclusive with `afterSequence` — see Event replay section. |
-| `replayTargetSequence` | `number` | No | Marks the end of the historical replay window for buffered agent requests. Set by `ACPAxonConnection` when `replay` is enabled. Mutually exclusive with `afterSequence`. |
+| `afterSequence` | `number` | No | Resume from this sequence — only events after it are delivered. Combine with `replayTargetSequence` to replay only `(afterSequence, replayTargetSequence]`. On `ACPAxonConnection`, the connection-level `replay` option (default `true`) resolves the target for you — see Event replay section. |
+| `replayTargetSequence` | `number` | No | Marks the end of the historical replay window for buffered agent requests. Set by `ACPAxonConnection` when `replay` is enabled. |
 
 **Returns**: `{ readable: ReadableStream<AnyMessage>; writable: WritableStream<AnyMessage> }`
 
@@ -462,8 +462,8 @@ Bidirectional, interactive client for Claude Code via Axon. Messages are yielded
 | `model` | `string` | Model ID (e.g. `"claude-sonnet-4-5"`) — set after initialization |
 | `onError` | `(error: unknown) => void` | Error callback (defaults to `console.error`) |
 | `onDisconnect` | `() => void \| Promise<void>` | Teardown callback invoked by `disconnect()` (e.g. devbox shutdown) |
-| `afterSequence` | `number` | Resume from this Axon sequence number — only events after it are delivered. **Mutually exclusive with `replay`.** |
-| `replay` | `boolean` | When `true` (the default), replays historical events without dispatching protocol handlers until replay completes; timeline listeners still receive events. Set to `false` for legacy behavior. **Mutually exclusive with `afterSequence`.** |
+| `afterSequence` | `number` | Resume from this Axon sequence number — only events after it are delivered. Composes with `replay`: replay from `afterSequence` with request/answer pairing (default) or live-only after `afterSequence` (`replay: false`). |
+| `replay` | `boolean` | When `true` (the default), replays historical events without dispatching protocol handlers until replay completes; timeline listeners still receive events. Set to `false` for legacy behavior. With `afterSequence`, only `(afterSequence, head]` is replayed. |
 | `bufferAgentEvents` | `boolean` | When `true` (the default), agent events are buffered until `receiveAgentEvents()` / `receiveAgentResponse()` drains them. Set to `false` when you consume the connection only through listeners and request/response methods — events are then delivered to an awaiting generator or dropped, so the buffer never grows on a connection nobody drains. |
 
 **Listeners & Lifecycle**:
@@ -580,8 +580,9 @@ Like ACP/Claude, call `initialize()` after `connect()` — it runs the app-serve
 | `requestTimeoutMs` | `number` | Timeout for request/response correlation and approval handlers (default `60000`) |
 | `onError` | `(error: unknown) => void` | Error callback (defaults to `console.error`) |
 | `onDisconnect` | `() => void \| Promise<void>` | Teardown callback invoked by `disconnect()` (e.g. devbox shutdown) |
-| `afterSequence` | `number` | Resume from this Axon sequence number — only events after it are delivered. **Mutually exclusive with `replay`.** |
-| `replay` | `boolean` | When `true` (the default), replays historical events without re-dispatching already-answered approval requests; timeline listeners still receive events. **Mutually exclusive with `afterSequence`.** |
+| `afterSequence` | `number` | Resume from this Axon sequence number — only events after it are delivered. Composes with `replay`: replay from `afterSequence` with request/answer pairing (default) or live-only after `afterSequence` (`replay: false`). With a bound past the `thread/started` frame, `threadId` stays `undefined` after `connect()` — seed it with the `threadId` option or call `resumeThread(threadId)`. |
+| `threadId` | `string` | The thread id this connection should assume when the replay does not reach the `thread/started` frame; a replayed `thread/started` frame still wins. Skips the `thread/resume` round trip when the app-server already has the thread active. |
+| `replay` | `boolean` | When `true` (the default), replays historical events without re-dispatching already-answered approval requests; timeline listeners still receive events. With `afterSequence`, only `(afterSequence, head]` is replayed. |
 | `bufferAgentEvents` | `boolean` | When `true` (the default), agent events are buffered until `receiveAgentEvents()` / `receiveTurn()` drains them. Set to `false` when you consume the connection only through listeners and request/response methods — events are then delivered to an awaiting generator or dropped, so the buffer never grows on a connection nobody drains. |
 
 **Listeners & Lifecycle**:
@@ -817,17 +818,22 @@ All modules subscribe to the Axon SSE stream. By default, `replay` is **`true`**
 
 Set **`replay: false`** to restore the previous behavior: every replayed event invokes handlers immediately (useful if you rely on side effects during history replay).
 
-**`replay` and `afterSequence` are mutually exclusive** — you cannot set both on the same connection.
+Pass **`afterSequence`** to subscribe starting **after** a known sequence number (earlier events are never requested — no full replay from the beginning). It composes with `replay`:
 
-Pass **`afterSequence`** to subscribe starting **after** a known sequence number (skips earlier events entirely — no full replay from the beginning):
+- **`afterSequence` + `replay: true`** (the default) — bounded replay. The connection still resolves the channel head and applies the replay semantics above to the events in `(afterSequence, head]`: timeline listeners receive each one, requests are paired with their answers, and only the still-unanswered requests reach handlers once the head is passed. If the head is at or below `afterSequence` there is nothing to replay and the first delivered event is live.
+- **`afterSequence` + `replay: false`** — live-only. Every event after `afterSequence` is dispatched to handlers as it arrives, including requests that a later event in the log already answered.
 
 ```typescript
-// ACP — skip events 0–42, receive 43+
+// ACP — replay 43..head with pairing, then go live
 const conn = new ACPAxonConnection(axon, devbox, { afterSequence: 42 });
 await conn.connect();
 
 // Claude — same option
 const conn = new ClaudeAxonConnection(axon, devbox, { afterSequence: 42 });
+await conn.connect();
+
+// Codex — a bound past thread/started leaves threadId undefined; seed it
+const conn = new CodexAxonConnection(axon, devbox, { afterSequence: 42, threadId: "thr_x" });
 await conn.connect();
 ```
 
@@ -885,8 +891,8 @@ Common options accepted by `ACPAxonConnection`, `ClaudeAxonConnection`, and `Cod
 | `verbose` | `boolean` | Emit verbose logs to stderr |
 | `onError` | `(error: unknown) => void` | Error callback (defaults to `console.error`) |
 | `onDisconnect` | `() => void \| Promise<void>` | Teardown callback invoked by `disconnect()` |
-| `afterSequence` | `number` | Resume from this Axon sequence number — only events after it are delivered. If omitted and `replay` is `false`, **all events from the beginning of the Axon channel are delivered to handlers**, replaying the entire session history. **Mutually exclusive with `replay`.** |
-| `replay` | `boolean` | When `true` (the default), `connect()` replays all events from the beginning of the Axon channel without dispatching to session/protocol handlers (timeline listeners still receive events). Unresolved permission/control requests are delivered after replay. Set `false` to process the full history with handlers firing for every event. **Mutually exclusive with `afterSequence`.** |
+| `afterSequence` | `number` | Resume from this Axon sequence number — only events after it are delivered. If omitted and `replay` is `false`, **all events from the beginning of the Axon channel are delivered to handlers**, replaying the entire session history. Composes with `replay`: replay from `afterSequence` with request/answer pairing (default) or live-only after `afterSequence` (`replay: false`). |
+| `replay` | `boolean` | When `true` (the default), `connect()` replays all events from the beginning of the Axon channel — or from `afterSequence` when set — without dispatching to session/protocol handlers (timeline listeners still receive events). Unresolved permission/control requests are delivered after replay. Set `false` to process the history with handlers firing for every event. |
 
 ### `AxonEventView`
 

@@ -122,6 +122,16 @@ export interface CodexAxonConnectionOptions extends BaseConnectionOptions {
   initializeParams?: Partial<InitializeParams>;
 
   /**
+   * The thread id this connection should assume when the replay does not
+   * reach the `thread/started` frame — for example when `afterSequence`
+   * is past it. Lets a caller reconnecting to an app-server that already
+   * has the thread active skip the `thread/resume` round trip of
+   * {@link CodexAxonConnection.resumeThread | resumeThread()}. A replayed
+   * or live `thread/started` frame still wins.
+   */
+  threadId?: string;
+
+  /**
    * When `true`, agent events are buffered until a pull-side generator
    * ({@link CodexAxonConnection.receiveAgentEvents | receiveAgentEvents}) drains them. Set to `false` for a
    * connection consumed only through push-side listeners and request/response
@@ -194,6 +204,7 @@ export class CodexAxonConnection {
     this.handleError = options.onError ?? makeDefaultOnError("CodexAxonConnection");
     this.log = makeLogger("codex-sdk", options.verbose ?? false);
     this.currentSource = options.source;
+    this._threadId = options.threadId;
     this.axonListeners = new ListenerSet(this.handleError);
     this.timelineListeners = new ListenerSet(this.handleError);
     this.messageQueue = new AsyncMessageQueue(
