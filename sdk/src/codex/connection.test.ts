@@ -256,6 +256,30 @@ describe("CodexAxonConnection", () => {
     expect(onError).not.toHaveBeenCalledWith(expect.any(SystemError));
   });
 
+  it("assumes the seeded threadId when the replay never reaches thread/started", async () => {
+    const { ctrl, conn } = setup({ threadId: "thr_x", replay: false, afterSequence: 5 });
+    await conn.connect();
+    expect(conn.threadId).toBe("thr_x");
+
+    // Nothing in the range mentions the thread; the seed stands.
+    ctrl.push(
+      makeAgentEvent("turn/started", { method: "turn/started", params: { turn: { id: "t" } } }, 6),
+    );
+    await tick();
+    expect(conn.threadId).toBe("thr_x");
+
+    // A later thread/started frame still wins over the seed.
+    ctrl.push(
+      makeAgentEvent(
+        "thread/started",
+        { method: "thread/started", params: { thread: { id: "thr_from_frame" } } },
+        7,
+      ),
+    );
+    await tick();
+    expect(conn.threadId).toBe("thr_from_frame");
+  });
+
   it("does not capture a user-origin thread/started event", async () => {
     const { ctrl, conn } = setup();
     await conn.connect();

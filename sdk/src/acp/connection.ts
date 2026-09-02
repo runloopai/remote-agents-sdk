@@ -182,10 +182,10 @@ export class ACPAxonConnection {
    * When `replay` is `true` (the default), queries the axon for the
    * current head sequence and replays all events up to that point
    * without invoking handlers. Unresolved permission requests are
-   * dispatched to handlers after replay completes.
+   * dispatched to handlers after replay completes. With `afterSequence`
+   * set as well, only `(afterSequence, head]` is replayed.
    *
    * @throws {ConnectionStateError} If already connected (`code: "already_connected"`).
-   * @throws If both `replay` and `afterSequence` are set.
    */
   async connect(): Promise<void> {
     if (this.connected) {

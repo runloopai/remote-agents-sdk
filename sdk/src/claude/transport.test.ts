@@ -738,6 +738,103 @@ describe("AxonTransport", () => {
       expect(mock.axon.subscribeSse).toHaveBeenCalledWith({ after_sequence: 42 });
     });
 
+    it("bounded replay: subscribes after afterSequence while keeping the replay target", async () => {
+      const ctrl2 = createControllableStream(true);
+      const mock = createMockAxon(ctrl2);
+      const t = new AxonTransport(mock.axon as never, {
+        afterSequence: 40,
+        replayTargetSequence: 45,
+      });
+      await t.connect();
+
+      expect(mock.axon.subscribeSse).toHaveBeenCalledOnce();
+      expect(mock.axon.subscribeSse).toHaveBeenCalledWith({ after_sequence: 40 });
+    });
+
+    it("bounded replay: does not yield a request answered within (afterSequence, target]", async () => {
+      const ctrl2 = createControllableStream(true);
+      const mock = createMockAxon(ctrl2);
+      const t = new AxonTransport(mock.axon as never, {
+        afterSequence: 40,
+        replayTargetSequence: 45,
+      });
+      await t.connect();
+
+      ctrl2.push({
+        event_type: "control_request",
+        payload: JSON.stringify({ request_id: "req-41", type: "can_use_tool" }),
+        origin: "AGENT_EVENT",
+        sequence: 41,
+      });
+      ctrl2.push({
+        event_type: "control_response",
+        payload: JSON.stringify({ response: { request_id: "req-41", permission: "allow" } }),
+        origin: "USER_EVENT",
+        sequence: 42,
+      });
+      ctrl2.push(makeAgentEvent("assistant", { type: "assistant", text: "replayed" }, 45));
+      ctrl2.push(makeAgentEvent("assistant", { type: "assistant", text: "live" }, 46));
+      ctrl2.end();
+
+      const messages: unknown[] = [];
+      for await (const msg of t.readMessages()) {
+        messages.push(msg);
+      }
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatchObject({ text: "live" });
+    });
+
+    it("bounded replay: yields an unanswered request from the range after the target", async () => {
+      const ctrl2 = createControllableStream(true);
+      const mock = createMockAxon(ctrl2);
+      const t = new AxonTransport(mock.axon as never, {
+        afterSequence: 40,
+        replayTargetSequence: 45,
+      });
+      await t.connect();
+
+      ctrl2.push({
+        event_type: "control_request",
+        payload: JSON.stringify({ request_id: "req-43", type: "can_use_tool" }),
+        origin: "AGENT_EVENT",
+        sequence: 43,
+      });
+      ctrl2.push(makeAgentEvent("assistant", { type: "assistant", text: "replayed" }, 45));
+      ctrl2.push(makeAgentEvent("assistant", { type: "assistant", text: "live" }, 46));
+      ctrl2.end();
+
+      const messages: unknown[] = [];
+      for await (const msg of t.readMessages()) {
+        messages.push(msg);
+      }
+      expect(messages).toHaveLength(2);
+      expect(messages[0]).toMatchObject({ request_id: "req-43" });
+      expect(messages[1]).toMatchObject({ text: "live" });
+    });
+
+    it("bounded replay: yields the first live frame when the head is at or below afterSequence", async () => {
+      const ctrl2 = createControllableStream(true);
+      const mock = createMockAxon(ctrl2);
+      // Head (50) <= afterSequence (50): nothing to replay, the range is empty.
+      const t = new AxonTransport(mock.axon as never, {
+        afterSequence: 50,
+        replayTargetSequence: 50,
+      });
+      await t.connect();
+
+      ctrl2.push(makeAgentEvent("assistant", { type: "assistant", text: "live-51" }, 51));
+      ctrl2.push(makeAgentEvent("assistant", { type: "assistant", text: "live-52" }, 52));
+      ctrl2.end();
+
+      const messages: unknown[] = [];
+      for await (const msg of t.readMessages()) {
+        messages.push(msg);
+      }
+      expect(messages).toHaveLength(2);
+      expect(messages[0]).toMatchObject({ text: "live-51" });
+      expect(messages[1]).toMatchObject({ text: "live-52" });
+    });
+
     it("handles replay with gap — first live event after target flushes buffer", async () => {
       const ctrl2 = createControllableStream(true);
       const mock = createMockAxon(ctrl2);

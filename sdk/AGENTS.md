@@ -327,14 +327,21 @@ current head sequence and replays events up to that point **without** dispatchin
 to session/protocol handlers (timeline listeners still receive events). Unresolved
 permission or control requests are delivered to handlers after replay finishes.
 Set `replay: false` to process the full history with handlers firing for every
-event (legacy-style). **`replay` and `afterSequence` are mutually exclusive** —
-passing both throws.
+event (legacy-style).
+
+**`replay` and `afterSequence` compose.** With both (the default `replay: true`),
+the connection replays only `(afterSequence, head]` with the same
+request/answer pairing, then goes live; if the head is at or below
+`afterSequence` nothing is replayed. With `replay: false`, every event after
+`afterSequence` is dispatched to handlers as it arrives. Codex: a bound past
+`thread/started` leaves `threadId` undefined after `connect()` — seed it with
+the `threadId` option or call `resumeThread(threadId)`.
 
 **Claude:**
 
 ```typescript
 const conn = new ClaudeAxonConnection(axon, devbox, {
-  afterSequence: 42, // skip events 0–42, receive 43+
+  afterSequence: 42, // never request events 0–42; replay 43..head with pairing, then live
 });
 await conn.connect();
 ```
