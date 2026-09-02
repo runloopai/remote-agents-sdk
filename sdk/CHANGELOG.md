@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.12](https://github.com/runloopai/remote-agents-sdk/compare/remote-agents-sdk-v0.4.11...remote-agents-sdk-v0.4.12) (2026-09-02)
+
+
+### Features
+
+* **sdk:** allow replay bounded by afterSequence ([#176](https://github.com/runloopai/remote-agents-sdk/issues/176)) ([5ec8e4f](https://github.com/runloopai/remote-agents-sdk/commit/5ec8e4ffad6366259ed395140631d3a02da423ae))
+
 ## [0.4.11](https://github.com/runloopai/remote-agents-sdk/compare/remote-agents-sdk-v0.4.10...remote-agents-sdk-v0.4.11) (2026-09-01)
 
 
