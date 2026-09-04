@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.13](https://github.com/runloopai/remote-agents-sdk/compare/remote-agents-sdk-v0.4.12...remote-agents-sdk-v0.4.13) (2026-09-04)
+
+
+### Features
+
+* **sdk:** type turn.resumed and background.changed system events ([#180](https://github.com/runloopai/remote-agents-sdk/issues/180)) ([cc36192](https://github.com/runloopai/remote-agents-sdk/commit/cc36192b7d2ef01790fd52256b417f1066412542))
+
 ## [0.4.12](https://github.com/runloopai/remote-agents-sdk/compare/remote-agents-sdk-v0.4.11...remote-agents-sdk-v0.4.12) (2026-09-02)
 
 
