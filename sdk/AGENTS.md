@@ -263,7 +263,7 @@ events.
 | `acp_protocol` | `SessionUpdate \| unknown` | Known ACP protocol event (agent or client method) |
 | `claude_protocol` | `SDKMessage` | Known Claude protocol event |
 | `codex_protocol` | Typed app-server frame | Known Codex app-server event (narrow with `event.eventType` or the `isCodex*` guards) |
-| `system` | `SystemEvent` | Broker system event (`turn.started`, `turn.completed`, `turn.failed`, `broker.error`) |
+| `system` | `SystemEvent` | Broker system event (`turn.started`, `turn.resumed`, `turn.completed`, `turn.failed`, `broker.error`, `background.changed`) |
 | `unknown` | `null` | Anything else — inspect `axonEvent` for details |
 
 Every timeline event has `{ kind, data, axonEvent }` where `axonEvent` is the
@@ -279,7 +279,7 @@ conn.onTimelineEvent((event) => {
       // event.data is SessionUpdate | unknown
       break;
     case "system":
-      // event.data is SystemEvent ({ type: "turn.started" | "turn.completed" | "turn.failed", turnId, ... })
+      // event.data is SystemEvent ({ type: "turn.started" | "turn.resumed" | "turn.completed" | "turn.failed", turnId, ... } | { type: "background.changed", active })
       break;
     case "unknown":
       // event.data is null — check event.axonEvent for raw data

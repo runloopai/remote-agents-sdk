@@ -105,7 +105,7 @@ conn.onTimelineEvent((event) => {
       // Typed ACP payload — narrow further with event.eventType
       break;
     case "system":
-      // event.data: { type: "turn.started" | "turn.completed" | "turn.failed", turnId, ... }
+      // event.data: { type: "turn.started" | "turn.resumed" | "turn.completed" | "turn.failed", turnId, ... } | { type: "background.changed", active }
       break;
     case "unknown":
       break;
@@ -233,7 +233,7 @@ conn.onTimelineEvent((event) => {
       }
       break;
     case "system":
-      // event.data: { type: "turn.started" | "turn.completed" | "turn.failed", turnId, ... }
+      // event.data: { type: "turn.started" | "turn.resumed" | "turn.completed" | "turn.failed", turnId, ... } | { type: "background.changed", active }
       break;
     case "unknown":
       break;
@@ -703,7 +703,7 @@ conn.onTimelineEvent((event: ACPTimelineEvent) => {
       // Use isFromAgent(event) / isFromUser(event) to check direction (or event.axonEvent.origin directly)
       break;
     case "system":
-      // event.data is SystemEvent: { type: "turn.started", turnId } | { type: "turn.completed", turnId, stopReason? } | { type: "turn.failed", turnId, error, stopReason? } | { type: "broker.error", message }
+      // event.data is SystemEvent: { type: "turn.started" | "turn.resumed", turnId } | { type: "turn.completed", turnId, stopReason? } | { type: "turn.failed", turnId, error, stopReason? } | { type: "broker.error", message } | { type: "background.changed", active }
       break;
     case "unknown":
       // event.data is null — use axonEvent to identify and parse the event yourself
@@ -752,7 +752,7 @@ conn.onTimelineEvent((event: CodexTimelineEvent) => {
       // the typed notification frame, "response" -> a correlated JSON-RPC response)
       break;
     case "system":
-      // event.data is SystemEvent (turn.started / turn.completed / turn.failed / broker.error)
+      // event.data is SystemEvent (turn.started / turn.resumed / turn.completed / turn.failed / broker.error / background.changed)
       break;
     case "unknown":
       // event.data is null — use axonEvent to identify and parse the event yourself
@@ -919,10 +919,27 @@ Typed representation of recognized broker system events:
 ```typescript
 type SystemEvent =
   | { type: "turn.started"; turnId: string }
+  | { type: "turn.resumed"; turnId: string }
   | { type: "turn.completed"; turnId: string; stopReason?: string }
   | { type: "turn.failed"; turnId: string; error: string; stopReason?: string }
-  | { type: "broker.error"; message: string };
+  | { type: "broker.error"; message: string }
+  | { type: "background.changed"; active: BackgroundTask[] };
+
+interface BackgroundTask {
+  id: string;
+  kind: "command" | "agent" | "workflow";
+}
 ```
+
+`turn.resumed` is emitted when the agent resumes the last turn on its own,
+typically because a background task it started has finished. It carries the
+same `turnId` as that turn, and the resumed turn ends with another
+`turn.completed`.
+
+`background.changed` is emitted while no turn is running, whenever the set of
+background tasks holding the devbox awake differs from what was last reported.
+`active` is the full set still running; an empty list means the agent's
+background work is done. Task churn inside a turn is not reported.
 
 `turn.failed` is emitted when the broker terminates an in-flight turn (for
 example, on a model error). The Axon stream layer also rejects any pending

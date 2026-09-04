@@ -332,6 +332,62 @@ describe("tryParseSystemEvent", () => {
     expect(tryParseSystemEvent(ev)).toBeNull();
     warnSpy.mockRestore();
   });
+
+  it("parses turn.resumed like turn.started", () => {
+    const ev = makeAxonEvent({
+      event_type: "turn.resumed",
+      payload: JSON.stringify({ turn_id: "t-1" }),
+    });
+    expect(tryParseSystemEvent(ev)).toEqual({ type: "turn.resumed", turnId: "t-1" });
+  });
+
+  it("parses background.changed with active tasks", () => {
+    const ev = makeAxonEvent({
+      event_type: "background.changed",
+      payload: JSON.stringify({
+        active: [
+          { id: "cmd-1", kind: "command" },
+          { id: "agent-1", kind: "agent" },
+        ],
+      }),
+    });
+    expect(tryParseSystemEvent(ev)).toEqual({
+      type: "background.changed",
+      active: [
+        { id: "cmd-1", kind: "command" },
+        { id: "agent-1", kind: "agent" },
+      ],
+    });
+  });
+
+  it("parses background.changed with an empty list", () => {
+    const ev = makeAxonEvent({
+      event_type: "background.changed",
+      payload: JSON.stringify({ active: [] }),
+    });
+    expect(tryParseSystemEvent(ev)).toEqual({ type: "background.changed", active: [] });
+  });
+
+  it("background.changed keeps unknown kinds and skips malformed entries", () => {
+    const ev = makeAxonEvent({
+      event_type: "background.changed",
+      payload: JSON.stringify({
+        active: [{ id: "x", kind: "future" }, { id: 42, kind: "command" }, "junk", null],
+      }),
+    });
+    expect(tryParseSystemEvent(ev)).toEqual({
+      type: "background.changed",
+      active: [{ id: "x", kind: "future" }],
+    });
+  });
+
+  it("returns null for background.changed without an active array", () => {
+    const ev = makeAxonEvent({
+      event_type: "background.changed",
+      payload: JSON.stringify({}),
+    });
+    expect(tryParseSystemEvent(ev)).toBeNull();
+  });
 });
 
 describe("isTurnFailedAxonEvent", () => {

@@ -22,21 +22,25 @@ import type {
 export type {
   AgentErrorTimelineEvent,
   AgentLogTimelineEvent,
+  BackgroundChangedTimelineEvent,
   BrokerErrorTimelineEvent,
   DevboxLifecycleTimelineEvent,
   TurnCompletedTimelineEvent,
   TurnFailedTimelineEvent,
+  TurnResumedTimelineEvent,
   TurnStartedTimelineEvent,
 } from "../shared/timeline-event-guards.js";
 export {
   createCustomEventGuard,
   isAgentErrorEvent,
   isAgentLogEvent,
+  isBackgroundChangedEvent,
   isBrokerErrorEvent,
   isDevboxLifecycleEvent,
   isSystemTimelineEvent,
   isTurnCompletedEvent,
   isTurnFailedEvent,
+  isTurnResumedEvent,
   isTurnStartedEvent,
   isUnknownTimelineEvent,
 } from "../shared/timeline-event-guards.js";

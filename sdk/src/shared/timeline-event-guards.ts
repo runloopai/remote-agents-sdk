@@ -11,6 +11,7 @@ import { SYSTEM_EVENT_TYPES } from "./timeline.js";
 import type {
   AgentErrorEvent,
   AgentLogEvent,
+  BackgroundChangedEvent,
   BaseTimelineEvent,
   CustomTimelineEvent,
   DevboxLifecycleKind,
@@ -201,6 +202,62 @@ export function isAgentLogEvent(event: BaseTimelineEvent): event is AgentLogTime
   return (
     event.kind === "system" &&
     (event.data as { type?: string }).type === SYSTEM_EVENT_TYPES.AGENT_LOG
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Turn resumed guard
+// ---------------------------------------------------------------------------
+
+/**
+ * Narrowed type for a `turn.resumed` system event.
+ * @category Timeline
+ */
+export type TurnResumedTimelineEvent = SystemTimelineEvent & {
+  data: { type: "turn.resumed"; turnId: string };
+};
+
+/**
+ * Type guard for `turn.resumed` system events: the agent resumed the last
+ * turn on its own (for example, when a background task finished) and will
+ * end it with another `turn.completed`.
+ *
+ * @param event - The timeline event to test.
+ * @returns `true` if `event` is a {@link TurnResumedTimelineEvent}.
+ * @category Timeline
+ */
+export function isTurnResumedEvent(event: BaseTimelineEvent): event is TurnResumedTimelineEvent {
+  return (
+    event.kind === "system" &&
+    (event.data as { type?: string }).type === SYSTEM_EVENT_TYPES.TURN_RESUMED
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Background changed guard
+// ---------------------------------------------------------------------------
+
+/**
+ * Narrowed type for a `background.changed` system event.
+ * @category Timeline
+ */
+export type BackgroundChangedTimelineEvent = SystemTimelineEvent & {
+  data: BackgroundChangedEvent;
+};
+
+/**
+ * Type guard for `background.changed` system events.
+ *
+ * @param event - The timeline event to test.
+ * @returns `true` if `event` is a {@link BackgroundChangedTimelineEvent}.
+ * @category Timeline
+ */
+export function isBackgroundChangedEvent(
+  event: BaseTimelineEvent,
+): event is BackgroundChangedTimelineEvent {
+  return (
+    event.kind === "system" &&
+    (event.data as { type?: string }).type === SYSTEM_EVENT_TYPES.BACKGROUND_CHANGED
   );
 }
 

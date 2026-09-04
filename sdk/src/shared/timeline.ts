@@ -4,7 +4,10 @@
 
 import type { AxonEventView } from "@runloop/api-client/resources/axons";
 import { SYSTEM_EVENT_ORIGIN } from "./errors/system-error.js";
+import { isNonNullObject } from "./structural-guards.js";
 import type {
+  BackgroundTask,
+  BackgroundTaskKind,
   DevboxLifecycleKind,
   SystemEvent,
   SystemTimelineEvent,
@@ -23,6 +26,7 @@ import type {
  */
 export const SYSTEM_EVENT_TYPES = {
   TURN_STARTED: "turn.started",
+  TURN_RESUMED: "turn.resumed",
   TURN_COMPLETED: "turn.completed",
   TURN_FAILED: "turn.failed",
   BROKER_ERROR: "broker.error",
@@ -32,6 +36,7 @@ export const SYSTEM_EVENT_TYPES = {
   DEVBOX_FAILED: "devbox.failed",
   AGENT_ERROR: "agent.error",
   AGENT_LOG: "agent.log",
+  BACKGROUND_CHANGED: "background.changed",
 } as const;
 
 /** Set of all recognized system event type strings for O(1) lookup. */
@@ -101,6 +106,10 @@ interface AgentLogPayload {
   message?: string;
 }
 
+interface BackgroundChangedPayload {
+  active?: unknown;
+}
+
 const DEVBOX_PREFIX = "devbox.";
 
 /** Set of recognized devbox lifecycle kinds for validation. */
@@ -150,6 +159,7 @@ export function tryParseTimelinePayload<T = unknown>(event: {
 export function tryParseSystemEvent(ev: AxonEventView): SystemEvent | null {
   if (
     ev.event_type === SYSTEM_EVENT_TYPES.TURN_STARTED ||
+    ev.event_type === SYSTEM_EVENT_TYPES.TURN_RESUMED ||
     ev.event_type === SYSTEM_EVENT_TYPES.TURN_COMPLETED
   ) {
     const parsed = tryParseTimelinePayload<TurnStartedPayload | TurnCompletedPayload>({
@@ -159,6 +169,9 @@ export function tryParseSystemEvent(ev: AxonEventView): SystemEvent | null {
     const turnId = (parsed as TurnStartedPayload).turn_id ?? "";
     if (ev.event_type === SYSTEM_EVENT_TYPES.TURN_STARTED) {
       return { type: "turn.started", turnId };
+    }
+    if (ev.event_type === SYSTEM_EVENT_TYPES.TURN_RESUMED) {
+      return { type: "turn.resumed", turnId };
     }
     return {
       type: "turn.completed",
@@ -222,6 +235,20 @@ export function tryParseSystemEvent(ev: AxonEventView): SystemEvent | null {
       logType: (parsed.log_type as "stderr") ?? "stderr",
       message: parsed.message ?? "",
     };
+  }
+
+  if (ev.event_type === SYSTEM_EVENT_TYPES.BACKGROUND_CHANGED) {
+    const parsed = tryParseTimelinePayload<BackgroundChangedPayload>({ axonEvent: ev });
+    if (!parsed || !Array.isArray(parsed.active)) return null;
+    const active: BackgroundTask[] = [];
+    for (const entry of parsed.active) {
+      if (!isNonNullObject(entry)) continue;
+      const { id, kind } = entry as { id?: unknown; kind?: unknown };
+      if (typeof id !== "string" || typeof kind !== "string") continue;
+      // Kinds the SDK does not know yet pass through as opaque strings.
+      active.push({ id, kind: kind as BackgroundTaskKind });
+    }
+    return { type: "background.changed", active };
   }
 
   return null;
