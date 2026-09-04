@@ -69,11 +69,12 @@ export interface AgentLogEvent {
 /**
  * What a background task is: a shell command the agent left running
  * (`command`), a sub-agent (`agent`), or a multi-step workflow (`workflow`).
- * The broker may add kinds; treat unknown strings as opaque.
+ * The set is open: the broker may add kinds, and the parser passes them
+ * through, so handle the string case rather than switching exhaustively.
  *
  * @category Timeline
  */
-export type BackgroundTaskKind = "command" | "agent" | "workflow";
+export type BackgroundTaskKind = "command" | "agent" | "workflow" | (string & {});
 
 /**
  * One background task the broker is holding the devbox awake for.

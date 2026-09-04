@@ -7,7 +7,6 @@ import { SYSTEM_EVENT_ORIGIN } from "./errors/system-error.js";
 import { isNonNullObject } from "./structural-guards.js";
 import type {
   BackgroundTask,
-  BackgroundTaskKind,
   DevboxLifecycleKind,
   SystemEvent,
   SystemTimelineEvent,
@@ -245,8 +244,8 @@ export function tryParseSystemEvent(ev: AxonEventView): SystemEvent | null {
       if (!isNonNullObject(entry)) continue;
       const { id, kind } = entry as { id?: unknown; kind?: unknown };
       if (typeof id !== "string" || typeof kind !== "string") continue;
-      // Kinds the SDK does not know yet pass through as opaque strings.
-      active.push({ id, kind: kind as BackgroundTaskKind });
+      // Kinds the SDK does not know yet pass through; the type is open.
+      active.push({ id, kind });
     }
     return { type: "background.changed", active };
   }

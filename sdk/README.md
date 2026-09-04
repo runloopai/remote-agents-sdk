@@ -927,7 +927,7 @@ type SystemEvent =
 
 interface BackgroundTask {
   id: string;
-  kind: "command" | "agent" | "workflow";
+  kind: "command" | "agent" | "workflow" | (string & {}); // open: the broker may add kinds
 }
 ```
 
