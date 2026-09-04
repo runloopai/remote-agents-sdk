@@ -21,8 +21,9 @@ export function isClaudeProtocolEventType(eventType: string): boolean {
  * Classifies a raw Axon event into a {@link ClaudeTimelineEvent}.
  *
  * Classification rules:
- * 1. `SYSTEM_EVENT` with `turn.started` / `turn.completed` / `turn.failed` /
- *    `broker.error` -> `system`
+ * 1. `SYSTEM_EVENT` with a recognized type (`turn.started`, `turn.resumed`,
+ *    `turn.completed`, `turn.failed`, `broker.error`, `background.changed`,
+ *    ...) -> `system`
  * 2. Known Claude protocol `event_type` -> `claude_protocol` with `eventType` discriminator
  * 3. Everything else -> `unknown`
  *

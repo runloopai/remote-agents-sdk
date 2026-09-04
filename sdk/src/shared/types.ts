@@ -66,14 +66,49 @@ export interface AgentLogEvent {
   message: string;
 }
 
+/**
+ * What a background task is: a shell command the agent left running
+ * (`command`), a sub-agent (`agent`), or a multi-step workflow (`workflow`).
+ * The set is open: the broker may add kinds, and the parser passes them
+ * through, so handle the string case rather than switching exhaustively.
+ *
+ * @category Timeline
+ */
+export type BackgroundTaskKind = "command" | "agent" | "workflow" | (string & {});
+
+/**
+ * One background task the broker is holding the devbox awake for.
+ *
+ * @category Timeline
+ */
+export interface BackgroundTask {
+  id: string;
+  kind: BackgroundTaskKind;
+}
+
+/**
+ * Background work changed while the broker was idle. `active` is the full
+ * set of tasks still running after the turn ended; an empty list means the
+ * agent's background work has finished and nothing is holding the devbox
+ * awake. Not emitted during a turn.
+ *
+ * @category Timeline
+ */
+export interface BackgroundChangedEvent {
+  type: "background.changed";
+  active: BackgroundTask[];
+}
+
 export type SystemEvent =
   | { type: "turn.started"; turnId: string }
+  | { type: "turn.resumed"; turnId: string }
   | { type: "turn.completed"; turnId: string; stopReason?: string }
   | { type: "turn.failed"; turnId: string; error: string; stopReason?: string }
   | { type: "broker.error"; message: string }
   | DevboxLifecycleEvent
   | AgentErrorEvent
-  | AgentLogEvent;
+  | AgentLogEvent
+  | BackgroundChangedEvent;
 
 /**
  * Common shape shared by every timeline event variant.

@@ -74,6 +74,9 @@ export { tryParseSystemEvent, tryParseTimelinePayload } from "../shared/timeline
 export type {
   AxonEventListener,
   AxonEventView,
+  BackgroundChangedEvent,
+  BackgroundTask,
+  BackgroundTaskKind,
   BaseConnectionOptions,
   CustomTimelineEvent,
   SystemEvent,
@@ -100,16 +103,19 @@ export {
 export type {
   AgentErrorTimelineEvent,
   AgentLogTimelineEvent,
+  BackgroundChangedTimelineEvent,
   BrokerErrorTimelineEvent,
   DevboxLifecycleTimelineEvent,
   TurnCompletedTimelineEvent,
   TurnFailedTimelineEvent,
+  TurnResumedTimelineEvent,
   TurnStartedTimelineEvent,
 } from "./timeline-event-guards.js";
 export {
   createCustomEventGuard,
   isAgentErrorEvent,
   isAgentLogEvent,
+  isBackgroundChangedEvent,
   isBrokerErrorEvent,
   isClaudeAssistantEvent,
   isClaudeAssistantTextEvent,
@@ -123,6 +129,7 @@ export {
   isSystemTimelineEvent,
   isTurnCompletedEvent,
   isTurnFailedEvent,
+  isTurnResumedEvent,
   isTurnStartedEvent,
   isUnknownTimelineEvent,
 } from "./timeline-event-guards.js";
