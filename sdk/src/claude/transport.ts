@@ -194,8 +194,13 @@ export class AxonTransport implements Transport {
       allowInvalidOutbound: true,
       isReplayRequest: (event) => isFromAgent(event) && isControlRequest(event),
       requestId: (frame) => getRequestId(frame),
-      isReplayAnswer: (event) => isFromUser(event) && isControlResponse(event),
+      // Cancellation is sent by the agent and carries the request id at the
+      // top level, unlike the nested id in a user control response.
+      isReplayAnswer: (event) =>
+        (isFromUser(event) && isControlResponse(event)) ||
+        (isFromAgent(event) && event.event_type === "control_cancel_request"),
       answerId: (frame) => {
+        if (frame.type === "control_cancel_request") return getRequestId(frame);
         const response = isNonNullObject(frame.response) ? frame.response : undefined;
         return getRequestId(response);
       },

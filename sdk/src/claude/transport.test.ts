@@ -677,7 +677,7 @@ describe("AxonTransport", () => {
       expect(messages).toHaveLength(0);
     });
 
-    it("flushes unresolved requests when stream ends before replay target", async () => {
+    it("retains unresolved requests when stream ends before replay target", async () => {
       const ctrl2 = createControllableStream(true);
       const mock = createMockAxon(ctrl2);
       const t = new AxonTransport(mock.axon as never, { replayTargetSequence: 100 });
@@ -695,8 +695,16 @@ describe("AxonTransport", () => {
       for await (const msg of t.readMessages()) {
         messages.push(msg);
       }
-      expect(messages).toHaveLength(1);
-      expect(messages[0]).toMatchObject({ request_id: "req-1" });
+      expect(messages).toHaveLength(0);
+
+      const resumed = createControllableStream(true);
+      mock.axon.subscribeSse.mockResolvedValueOnce(resumed.stream);
+      await t.reconnect();
+      expect(mock.axon.subscribeSse).toHaveBeenLastCalledWith({ after_sequence: 1 });
+      resumed.push(makeAgentEvent("assistant", { type: "assistant" }, 100));
+      resumed.end();
+      for await (const msg of t.readMessages()) messages.push(msg);
+      expect(messages).toEqual([{ request_id: "req-1", type: "can_use_tool" }]);
     });
 
     it("fires onAxonEvent during replay", async () => {
