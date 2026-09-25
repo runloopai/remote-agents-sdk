@@ -37,6 +37,9 @@ export class AxonFrameTransport<TFrame> {
   private connected = false;
   private closed = false;
   private lastSequence?: number;
+  // A stream may disconnect before reaching the replay head. Keep correlation
+  // state alongside the resume cursor so the next subscription can finish it.
+  private readonly replayBuffer = new Map<FrameRequestId, TFrame>();
   private readonly log: LogFn;
 
   constructor(
@@ -86,7 +89,7 @@ export class AxonFrameTransport<TFrame> {
   async *readMessages(): AsyncGenerator<TFrame> {
     if (!this.stream) throw new Error("Transport not connected. Call connect() first.");
     const target = this.options.replayTargetSequence;
-    const replayBuffer = new Map<FrameRequestId, TFrame>();
+    const replayBuffer = this.replayBuffer;
     const flush = function* (): Generator<TFrame> {
       for (const frame of replayBuffer.values()) yield frame;
       replayBuffer.clear();
@@ -123,7 +126,8 @@ export class AxonFrameTransport<TFrame> {
       if (frame !== undefined) yield frame;
       else this.log("read", `invalid frame for ${event.event_type}`);
     }
-    yield* flush();
+    // EOF is not proof that replay reached its head: a later page may contain
+    // an answer or cancellation. Only flush at/past the captured target.
   }
 
   abortStream(): void {
@@ -135,6 +139,7 @@ export class AxonFrameTransport<TFrame> {
     if (this.closed) return;
     this.closed = true;
     this.connected = false;
+    this.replayBuffer.clear();
     this.abortStream();
   }
 

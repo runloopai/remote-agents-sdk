@@ -816,6 +816,10 @@ conn.onTimelineEvent((event) => {
 
 All modules subscribe to the Axon SSE stream. By default, `replay` is **`true`**: the connection queries the channel head and replays all events up to that point **without** dispatching to session updates, permission handlers, (Claude) control handlers, or (Codex) approval handlers — timeline listeners still receive every event. Unresolved permission/control/approval work is flushed after replay completes.
 
+Claude replay retires a control request when it encounters either a matching user `control_response` or an agent `control_cancel_request`. A newer user query alone does not retire an earlier pending request. Choose `afterSequence` to include any pending request that must be recovered; a request before that bound is never fetched. Request identity is the protocol `request_id`, independent of the connection handling it.
+
+Claude and Codex retain buffered replay requests across SSE reconnects. A stream ending before the captured head does not dispatch those requests: the remaining history may still contain their responses or cancellations.
+
 Set **`replay: false`** to restore the previous behavior: every replayed event invokes handlers immediately (useful if you rely on side effects during history replay).
 
 Pass **`afterSequence`** to subscribe starting **after** a known sequence number (earlier events are never requested — no full replay from the beginning). It composes with `replay`:
