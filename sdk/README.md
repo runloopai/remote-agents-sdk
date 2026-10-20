@@ -617,6 +617,7 @@ Like ACP/Claude, call `initialize()` after `connect()` — it runs the app-serve
 | `startReview(target?, delivery?)` | Start a Codex review (`review/start`); defaults to reviewing uncommitted changes |
 | `compactThread()` | Compact the active thread's context (`thread/compact/start`) |
 | `readConfig(params?)` | Read the app-server's effective configuration (`config/read`) |
+| `readConfigRequirements()` | Read the managed requirements the app-server enforces, such as allowed sandbox modes (`configRequirements/read`) |
 
 **Listeners**:
 

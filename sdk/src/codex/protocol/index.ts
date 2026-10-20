@@ -3,6 +3,8 @@ export type * from "./generated/index.js";
 export type {
   ConfigReadParams,
   ConfigReadResponse,
+  ConfigRequirements,
+  ConfigRequirementsReadResponse,
   GetAccountRateLimitsResponse,
   GetAccountTokenUsageResponse,
   ListMcpServerStatusParams,
