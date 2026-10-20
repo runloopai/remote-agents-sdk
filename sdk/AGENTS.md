@@ -241,6 +241,7 @@ await conn.disconnect();
 | `startReview(target?, delivery?)` | Start a Codex review (`review/start`); defaults to uncommitted changes |
 | `compactThread()` | Compact the active thread's context (`thread/compact/start`) |
 | `readConfig(params?)` | Read the app-server's effective config (`config/read`) |
+| `readConfigRequirements()` | Read enforced managed requirements (`configRequirements/read`) |
 | `onApprovalRequest(method, handler)` | Handle server-initiated approval or MCP elicitation requests (returns unsubscribe fn) |
 | `threadId` | The active thread id (`string \| undefined`) |
 | `onAxonEvent(listener)` | Subscribe to all Axon events (returns unsubscribe fn) |

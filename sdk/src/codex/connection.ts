@@ -22,6 +22,7 @@ import type {
   CollaborationMode,
   ConfigReadParams,
   ConfigReadResponse,
+  ConfigRequirementsReadResponse,
   GetAccountRateLimitsResponse,
   GetAccountTokenUsageResponse,
   InitializeParams,
@@ -744,6 +745,18 @@ export class CodexAxonConnection {
   /** Reads the app-server's effective configuration (`config/read`). */
   async readConfig(params: ConfigReadParams = {}): Promise<ConfigReadResponse> {
     return (await this.request("config/read", params)) as ConfigReadResponse;
+  }
+  /**
+   * Reads the managed requirements the app-server enforces
+   * (`configRequirements/read`), such as allowed sandbox modes and permission
+   * profiles; `requirements` is null when none apply.
+   * Wire params are `Option<()>`: the params field must be omitted, not `{}`.
+   */
+  async readConfigRequirements(): Promise<ConfigRequirementsReadResponse> {
+    return (await this.request(
+      "configRequirements/read",
+      undefined,
+    )) as ConfigRequirementsReadResponse;
   }
   /**
    * Reads the account's current rate limits (`account/rateLimits/read`).

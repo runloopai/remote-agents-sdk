@@ -309,6 +309,7 @@ describe("CodexAxonConnection", () => {
     await conn.connect();
     await conn.startThread();
     await conn.getAccountRateLimits();
+    await conn.readConfigRequirements();
     await conn.getAccountTokenUsage();
     await conn.readThread({ includeTurns: true });
     await conn.setThreadName("renamed");
@@ -321,6 +322,7 @@ describe("CodexAxonConnection", () => {
     const byMethod = Object.fromEntries(frames.map((frame) => [frame.method, frame]));
     // Option<()> wire params: the field must be absent, not an empty object.
     expect(byMethod["account/rateLimits/read"]).not.toHaveProperty("params");
+    expect(byMethod["configRequirements/read"]).not.toHaveProperty("params");
     expect(byMethod["account/usage/read"]).not.toHaveProperty("params");
     expect(byMethod["thread/read"]).toMatchObject({
       params: { threadId: "thr-1", includeTurns: true },
